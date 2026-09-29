@@ -1,0 +1,114 @@
+{
+  "users": {
+    "tg_jwu7ohdz": {
+      "userId": "tg_jwu7ohdz",
+      "name": "Player #ohdz",
+      "username": "",
+      "balance": 0,
+      "createdAt": "2026-09-29T16:50:46.841Z",
+      "lastActive": "2026-09-29T17:33:17.011Z"
+    },
+    "tg_test_welcome_1": {
+      "userId": "tg_test_welcome_1",
+      "name": "Abebe Bikila",
+      "username": "",
+      "balance": 0,
+      "createdAt": "2026-09-29T17:18:58.691Z",
+      "lastActive": "2026-09-29T17:18:58.691Z"
+    },
+    "tg_new_player_20etb": {
+      "userId": "tg_new_player_20etb",
+      "name": "Solomon Tessema",
+      "username": "",
+      "balance": 20,
+      "createdAt": "2026-09-29T17:19:07.436Z",
+      "lastActive": "2026-09-29T17:33:35.859Z"
+    }
+  },
+  "deposits": [
+    {
+      "userId": "tg_new_player_20etb",
+      "userName": "Solomon Tessema",
+      "rawText": "credited with 150.00 ETB on 2026-09-29. Transaction Ref: CIC999TEST1. from ABEBE BIKILA (0911223344) to Robinson Solomon",
+      "receiptNo": "CIC999TEST1",
+      "amount": 150,
+      "senderName": "ABEBE BIKILA",
+      "senderPhone": "0911223344",
+      "receiptTimestamp": "2026-09-29",
+      "notes": "Submitted via Telebirr Cashier modal",
+      "id": "dep_sgx4vnwr",
+      "status": "approved",
+      "submittedAt": "2026-09-29T17:33:15.022Z",
+      "reviewedAt": "2026-09-29T17:33:27.633Z",
+      "reviewedBy": "System Auto-Verify"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx_t7gokq6",
+      "userId": "tg_new_player_20etb",
+      "type": "deposit",
+      "amount": 150,
+      "previousBalance": 20,
+      "newBalance": 170,
+      "receiptNo": "CIC999TEST1",
+      "status": "approved",
+      "notes": "Telebirr Deposit Approved (#CIC999TEST1)",
+      "timestamp": "2026-09-29T17:33:27.633Z"
+    },
+    {
+      "id": "tx_vbx76n5",
+      "userId": "tg_new_player_20etb",
+      "type": "win",
+      "amount": 50,
+      "previousBalance": 20,
+      "newBalance": 70,
+      "status": "approved",
+      "notes": "VIP Daily Reload Bonus (+50.00 ETB)",
+      "timestamp": "2026-09-29T17:20:07.590Z"
+    },
+    {
+      "id": "tx_nj50fgu",
+      "userId": "tg_new_player_20etb",
+      "type": "bet",
+      "amount": 5,
+      "previousBalance": 20,
+      "newBalance": 15,
+      "status": "approved",
+      "notes": "Fast Keno Bet on #890253781 (4 spots)",
+      "timestamp": "2026-09-29T17:19:29.118Z"
+    },
+    {
+      "id": "tx_5s36j4d",
+      "userId": "tg_new_player_20etb",
+      "type": "WELCOME_BONUS",
+      "amount": 20,
+      "previousBalance": 0,
+      "newBalance": 20,
+      "status": "approved",
+      "notes": "Welcome Signup Bonus (+20.00 ETB)",
+      "timestamp": "2026-09-29T17:19:07.436Z"
+    }
+  ],
+  "processedReceipts": {
+    "CIC999TEST1": {
+      "receiptNo": "CIC999TEST1",
+      "userId": "tg_new_player_20etb",
+      "amount": 150,
+      "approvedAt": "2026-09-29T17:33:27.633Z"
+    }
+  },
+  "auditLogs": [
+    {
+      "id": "audit_3rwhlv1",
+      "admin": "System Auto-Verify",
+      "action": "approve_deposit",
+      "targetUserId": "tg_new_player_20etb",
+      "amount": 150,
+      "receiptNo": "CIC999TEST1",
+      "reason": "Approved deposit request dep_sgx4vnwr",
+      "timestamp": "2026-09-29T17:33:27.633Z"
+    }
+  ],
+  "withdrawals": []
+}

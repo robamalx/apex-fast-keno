@@ -1,0 +1,287 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #060907;
+    color: #f1f5f9;
+  }
+
+  #root {
+    height: auto !important;
+    min-height: 100% !important;
+    width: 100%;
+    overflow-x: hidden;
+  }
+}
+
+/* Modern clean high-legibility tabular lining figures for all numerical values */
+.font-digital,
+.font-mono-num,
+.font-tabular {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Strict Black & Emerald Green Color Palette Tokens */
+.bg-atlas-black {
+  background-color: #060907;
+}
+
+.bg-atlas-surface {
+  background-color: #0f1913;
+}
+
+.bg-atlas-panel {
+  background-color: #0f1913;
+}
+
+.border-atlas-border {
+  border-color: #1a2c20;
+}
+
+/* 3D Glossy Spheres (for Quick Pick & HUD) */
+.sphere-3d-slate {
+  background: radial-gradient(circle at 35% 28%, #364d3f 0%, #1e2e25 40%, #141f18 75%, #08100b 100%);
+  box-shadow: inset -2px -2px 4px rgba(0, 0, 0, 0.9), inset 1.5px 1.5px 3px rgba(255, 255, 255, 0.4), 0 2px 6px rgba(0, 0, 0, 0.6);
+  position: relative;
+  overflow: hidden;
+}
+
+.sphere-3d-slate::before {
+  content: '';
+  position: absolute;
+  top: 10%;
+  left: 14%;
+  width: 38%;
+  height: 24%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.3) 50%, rgba(255, 255, 255, 0) 80%);
+  transform: rotate(-35deg);
+  pointer-events: none;
+}
+
+.sphere-3d-mint {
+  background: radial-gradient(circle at 35% 30%, #a7f3d0 0%, #34d399 30%, #00e699 65%, #059669 90%, #064e3b 100%);
+  box-shadow: inset -2px -2px 5px rgba(0, 0, 0, 0.6), inset 2px 2px 5px rgba(255, 255, 255, 0.8), 0 3px 10px rgba(0, 230, 153, 0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.sphere-3d-mint::before {
+  content: '';
+  position: absolute;
+  top: 10%;
+  left: 14%;
+  width: 38%;
+  height: 24%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 75%);
+  transform: rotate(-35deg);
+  pointer-events: none;
+}
+
+/* 80-Number Board Tile States (Strict Black & Green Casino Aesthetic) */
+/* 1. Unselected Tile: Dark matte slate-black (#141f18) with subtle border (#1e3325) and clean crisp silver-white (#e2e8f0) */
+.tile-atlas-unselected {
+  background-color: #141f18;
+  border: 1px solid #1e3325;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  transition: all 0.12s ease;
+  position: relative;
+}
+
+.tile-atlas-unselected:hover {
+  background-color: #1a2b21;
+  border-color: #274432;
+  color: #ffffff;
+}
+
+/* 2. Selected Numbers: Solid bright emerald green (#00e699) with bold jet-black numerals (#000000) and soft outer green glow */
+.tile-atlas-selected {
+  background-color: #00e699 !important;
+  border: 1.5px solid #6ee7b7 !important;
+  color: #000000 !important;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 800 !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  box-shadow: 0 0 10px rgba(0, 230, 153, 0.5) !important;
+  position: relative;
+}
+
+/* 3. Drawn Miss: Subtle dark-green/gray border with muted olive/slate background */
+.tile-atlas-drawn-miss {
+  background-color: #1e3328 !important;
+  border: 1px solid #365342 !important;
+  color: #e2e8f0 !important;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  box-shadow: 0 0 6px rgba(30, 51, 40, 0.5) !important;
+  position: relative;
+}
+
+/* 4. Matched Hit: Glowing electric lime-green (#4ade80) with pulse animation and bold black text */
+.tile-atlas-drawn-hit {
+  background-color: #4ade80 !important;
+  border: 1.5px solid #ffffff !important;
+  color: #000000 !important;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 800 !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  box-shadow: 0 0 16px rgba(74, 222, 128, 0.9), inset 0 0 6px rgba(255, 255, 255, 0.6) !important;
+  animation: pulse-hit 1.2s infinite ease-in-out;
+  position: relative;
+  z-index: 10;
+}
+
+@keyframes pulse-hit {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 12px rgba(74, 222, 128, 0.8);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 20px rgba(74, 222, 128, 1);
+  }
+}
+
+/* Bounce Pop for In-Place Board Light-Up on newly drawn ball */
+@keyframes bounce-pop {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-bounce-pop {
+  animation: bounce-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Top Chute Slot Styles */
+/* Regular ball: Dark slate circle (#18261e) with sharp white numbers */
+.chute-ball-regular {
+  background-color: #18261e;
+  border: 1px solid #2a3d31;
+  color: #ffffff;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Player match: Solid emerald green circle (#00e699) with black numbers and soft glow */
+.chute-ball-hit {
+  background-color: #00e699;
+  border: 1.5px solid #a7f3d0;
+  color: #000000;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  box-shadow: 0 0 10px rgba(0, 230, 153, 0.6);
+}
+
+/* Empty dark circular slot */
+.chute-slot-empty {
+  background-color: #0d1712;
+  border: 1px solid #1e3325;
+}
+
+/* Chute reveal animation: smooth slide down or fade in (250ms ease-out, scale 0.8 to 1) */
+@keyframes chute-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-chute-reveal {
+  animation: chute-reveal 250ms ease-out forwards;
+}
+
+/* Spot Hit in Ticket Feed */
+.ticket-spot-hit {
+  background-color: #00e699 !important;
+  color: #000000 !important;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 800 !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  border: 1px solid #a7f3d0 !important;
+  box-shadow: 0 0 10px rgba(0, 230, 153, 0.6) !important;
+  animation: spot-hit-glow 0.35s ease-out forwards;
+}
+
+@keyframes spot-hit-glow {
+  0% {
+    transform: scale(0.85);
+    box-shadow: 0 0 0 rgba(0, 230, 153, 0);
+  }
+  50% {
+    transform: scale(1.12);
+    box-shadow: 0 0 14px rgba(0, 230, 153, 0.8);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(0, 230, 153, 0.5);
+  }
+}
+
+/* Subtle hit indicator badge */
+@keyframes badge-pop {
+  0% {
+    transform: scale(0) translateY(3px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-hit-badge {
+  animation: badge-pop 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+/* Custom Scrollbars in Slate-Green */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #040705;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e3325;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #00e699;
+}

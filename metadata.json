@@ -1,0 +1,6 @@
+{
+  "name": "ATLAS V - FAST KENO",
+  "description": "Full-stack Telegram Mini App replicating ATLAS V FAST KENO with high-win-rate draw engine, live community bets, and digital countdown.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
