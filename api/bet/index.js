@@ -14,79 +14,55 @@ export default async function handler(req, res) {
     }
   }
 
-  const telegramId = body?.userId || body?.telegram_id || body?.telegramId;
-  const chosenNumbers = body?.chosenNumbers;
-  const stake = body?.stake;
+  const telegramId = body?.telegram_id || body?.userId || body?.telegramId;
+  const betAmount = body?.stake || body?.amount || body?.betAmount;
+  const chosenNumbers = body?.chosenNumbers || [];
 
   if (!telegramId) {
-    return res.status(400).json({ error: 'Missing userId / telegram_id' });
+    return res.status(400).json({ error: 'Missing telegram_id' });
   }
 
-  if (!Array.isArray(chosenNumbers) || chosenNumbers.length < 1 || chosenNumbers.length > 10) {
-    return res.status(400).json({ error: 'Please select between 1 and 10 numbers.' });
-  }
-
-  const parsedStake = parseFloat(stake);
-  if (isNaN(parsedStake) || parsedStake <= 0) {
-    return res.status(400).json({ error: 'Invalid stake amount.' });
+  const amountToDeduct = parseFloat(betAmount);
+  if (isNaN(amountToDeduct) || amountToDeduct <= 0) {
+    return res.status(400).json({ error: 'Invalid bet amount' });
   }
 
   try {
-    if (!process.env.DATABASE_URL) {
-      return res.status(500).json({ error: 'DATABASE_URL is not configured.' });
-    }
-
     const sql = neon(process.env.DATABASE_URL);
-    const userResult = await sql`
-      SELECT id, telegram_id, balance, bonus_balance, first_name 
-      FROM users 
-      WHERE telegram_id = ${String(telegramId)}
-      LIMIT 1
-    `;
+
+    // 1. Fetch user's current balances first
+    const userResult = await sql`SELECT balance, bonus_balance, first_name FROM users WHERE telegram_id = ${telegramId}`;
 
     if (userResult.length === 0) {
-      return res.status(404).json({ error: 'Player account not found.' });
+      return res.status(404).json({ error: 'User not found' });
     }
 
     const user = userResult[0];
 
-    // Safely handle null or undefined values using parseFloat with || 0
-    const realBalance = parseFloat(user.balance) || 0;
-    const bonusBalance = parseFloat(user.bonus_balance) || 0;
-    const totalPlayableBalance = realBalance + bonusBalance;
+    // 2. Do the math safely in JavaScript
+    let realBalance = parseFloat(user.balance) || 0;
+    let bonusBalance = parseFloat(user.bonus_balance) || 0;
 
-    // Check if the user has enough combined funds (balance + bonus_balance)
-    if (totalPlayableBalance < parsedStake) {
-      return res.status(400).json({
-        error: `Insufficient balance! Available: ${totalPlayableBalance.toFixed(2)} ETB (Stake: ${parsedStake.toFixed(2)} ETB).`,
-      });
+    if (realBalance + bonusBalance < amountToDeduct) {
+      return res.status(400).json({ error: 'Insufficient funds' });
     }
 
-    // Deduct from bonus_balance first
-    let newBonusBalance = bonusBalance;
-    let newRealBalance = realBalance;
-
-    if (bonusBalance >= parsedStake) {
-      newBonusBalance = bonusBalance - parsedStake;
+    if (bonusBalance >= amountToDeduct) {
+      bonusBalance -= amountToDeduct;
     } else {
-      // If the bet is larger than bonus_balance, deduct remainder from main balance
-      const remainder = parsedStake - bonusBalance;
-      newBonusBalance = 0;
-      newRealBalance = realBalance - remainder;
+      let remaining = amountToDeduct - bonusBalance;
+      bonusBalance = 0;
+      realBalance -= remaining;
     }
 
-    // Clamp to prevent negative values from floating point inaccuracies
-    newBonusBalance = Math.max(0, newBonusBalance);
-    newRealBalance = Math.max(0, newRealBalance);
+    // Clean floating point precision
+    realBalance = Math.max(0, parseFloat(realBalance.toFixed(2)));
+    bonusBalance = Math.max(0, parseFloat(bonusBalance.toFixed(2)));
 
-    // Update database balances
-    await sql`
-      UPDATE users 
-      SET balance = ${newRealBalance.toFixed(2)}, 
-          bonus_balance = ${newBonusBalance.toFixed(2)} 
-      WHERE telegram_id = ${String(telegramId)}
-    `;
+    // 3. Simple UPDATE query to save newly calculated balances
+    await sql`UPDATE users SET balance = ${realBalance}, bonus_balance = ${bonusBalance} WHERE telegram_id = ${telegramId}`;
 
+    // 4. Build ticket / ledger entry
     const now = new Date();
     const timeStr = now.toTimeString().split(' ')[0];
     const ticketId = 't_' + Math.random().toString(36).substring(2, 9);
@@ -94,26 +70,39 @@ export default async function handler(req, res) {
 
     const ticket = {
       id: ticketId,
-      drawId: body.drawId || String(Date.now()).slice(-9),
+      drawId: body?.drawId || String(Date.now()).slice(-9),
       userId: String(telegramId),
       userName: playerName,
       userMasked: `${playerName.slice(0, 3)}***`,
-      chosenNumbers: [...chosenNumbers].sort((a, b) => a - b),
-      stake: parsedStake,
+      chosenNumbers: Array.isArray(chosenNumbers) ? [...chosenNumbers].sort((a, b) => a - b) : [],
+      stake: amountToDeduct,
       timestamp: timeStr,
       status: 'waiting',
     };
 
-    const combinedNewBalance = parseFloat((newRealBalance + newBonusBalance).toFixed(2));
+    // Optional ticket insert if tickets table exists in user's database
+    try {
+      await sql`
+        INSERT INTO tickets (ticket_id, telegram_id, chosen_numbers, stake, status, created_at)
+        VALUES (${ticketId}, ${telegramId}, ${JSON.stringify(ticket.chosenNumbers)}, ${amountToDeduct}, 'waiting', NOW())
+      `;
+    } catch {
+      // Table may not exist; continue safely
+    }
+
+    const newPlayableBalance = parseFloat((realBalance + bonusBalance).toFixed(2));
 
     return res.status(200).json({
       success: true,
       ticket,
       ticketsPlacedCount: 1,
-      newBalance: combinedNewBalance,
+      newBalance: newPlayableBalance,
+      balance: newPlayableBalance,
+      realBalance,
+      bonusBalance,
     });
   } catch (error) {
-    console.error('API /api/bet Error:', error);
-    return res.status(500).json({ error: 'Failed to place bet. Please try again.' });
+    console.error('API Error in bet handler:', error);
+    return res.status(500).json({ error: 'Failed to process bet' });
   }
 }

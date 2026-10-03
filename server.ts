@@ -279,8 +279,8 @@ app.post('/api/bet', async (req, res) => {
 
         await sql`
           UPDATE users 
-          SET balance = ${newRealBalance.toFixed(2)}, bonus_balance = ${newBonusBalance.toFixed(2)} 
-          WHERE telegram_id = ${String(userId)}
+          SET balance = ${newRealBalance}, bonus_balance = ${newBonusBalance} 
+          WHERE telegram_id = ${userId}
         `;
 
         const drawIdStr = String(currentServerDrawId);
