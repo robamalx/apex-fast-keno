@@ -129,10 +129,13 @@ app.get('/api/balance', async (req, res) => {
     try {
       const { neon } = await import('@neondatabase/serverless');
       const sql = neon(process.env.DATABASE_URL);
-      const result = await sql`SELECT balance, first_name FROM users WHERE telegram_id = ${telegramId}`;
+      const result = await sql`SELECT balance, bonus_balance, first_name FROM users WHERE telegram_id = ${telegramId}`;
       if (result.length > 0) {
+        const realBalance = parseFloat(String(result[0].balance)) || 0;
+        const bonusBalance = parseFloat(String(result[0].bonus_balance)) || 0;
+        const totalPlayableBalance = (realBalance + bonusBalance).toFixed(2);
         return res.json({
-          balance: String(result[0].balance ?? '0.00'),
+          balance: totalPlayableBalance,
           first_name: result[0].first_name || 'Player',
         });
       }
