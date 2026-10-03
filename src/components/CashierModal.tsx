@@ -37,11 +37,6 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
   const [copied, setCopied] = useState(false);
 
-  // Deposit Form State
-  const [smsText, setSmsText] = useState('');
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [depositError, setDepositError] = useState('');
-
   // Withdraw Form State
   const [withdrawPhone, setWithdrawPhone] = useState(phoneNumber);
   const [withdrawName, setWithdrawName] = useState('');
@@ -55,59 +50,20 @@ export const CashierModal: React.FC<CashierModalProps> = ({
     navigator.clipboard.writeText(phoneNumber);
     setCopied(true);
     haptic.selection();
-    showToast('Agent number copied to clipboard!', 'info');
+    showToast('Phone number copied to clipboard!', 'info');
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleVerifyDeposit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!smsText.trim()) {
-      setDepositError('Please paste your Telebirr SMS or receipt text.');
-      haptic.notification('warning');
-      return;
-    }
-
-    setDepositError('');
-    setIsVerifying(true);
-    haptic.impact('heavy');
-
+  const handleCloseToSendReceipt = () => {
+    haptic.selection();
     try {
-      const res = await fetch('/api/wallet/deposit/sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          smsText,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setDepositError(data.error || 'Verification failed. Please check the receipt.');
-        haptic.notification('error');
-        return;
-      }
-
-      if (data.status === 'pending') {
-        haptic.notification('success');
-        showToast(data.message || `Deposit request submitted for verification!`, 'info');
-        setSmsText('');
+      if (typeof window !== 'undefined' && (window as unknown as { Telegram?: { WebApp?: { close: () => void } } })?.Telegram?.WebApp?.close) {
+        (window as unknown as { Telegram?: { WebApp?: { close: () => void } } }).Telegram?.WebApp?.close();
+      } else {
         onClose();
-        return;
       }
-
-      const credited = data.creditedAmount ?? data.amount ?? 0;
-      onDepositVerified(credited, data.newBalance);
-      haptic.notification('success');
-      showToast(data.message || `Successfully deposited ${credited.toFixed(2)} ETB!`, 'success');
-      setSmsText('');
-      onClose();
     } catch {
-      setDepositError('Network error connecting to payment gateway.');
-      haptic.notification('error');
-    } finally {
-      setIsVerifying(false);
+      onClose();
     }
   };
 
@@ -224,67 +180,65 @@ export const CashierModal: React.FC<CashierModalProps> = ({
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto space-y-4 py-1 text-xs text-slate-300">
           {activeTab === 'deposit' ? (
-            <>
-              {/* Agent Instructions */}
-              <div className="bg-[#050807] border border-[#1f3127] rounded-2xl p-3.5 space-y-2">
-                <span className="text-[10px] font-bold text-[#00e699] uppercase tracking-wider block">
-                  Step 1: Transfer Funds via Telebirr
-                </span>
-                <div className="flex items-center justify-between bg-[#151f19] p-2.5 rounded-xl border border-[#1f3127]">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">Agent Receiver Name:</span>
-                    <span className="font-extrabold text-white text-xs">{receiverName}</span>
-                  </div>
-                  <ShieldCheck className="w-4 h-4 text-[#00e699]" />
-                </div>
-                <div className="flex items-center justify-between bg-[#151f19] p-2.5 rounded-xl border border-[#1f3127]">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">Telebirr Phone Number:</span>
-                    <span className="font-extrabold text-white font-mono-num text-xs tracking-wider">
-                      {phoneNumber}
+            <div className="space-y-4 py-2">
+              {/* Deposit Card */}
+              <div className="bg-[#050807] border border-[#1f3127] rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-[#142319]">
+                  <span className="text-[11px] font-bold text-[#00e699] uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-[#00e699]" />
+                    Manual Telebirr Deposit
+                  </span>
+                  {receiverName && (
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      {receiverName}
                     </span>
-                  </div>
-                  <button
-                    onClick={handleCopyNumber}
-                    className="p-1.5 bg-[#050807] hover:bg-[#1f3127] rounded-lg text-[#00e699] transition-colors cursor-pointer flex items-center gap-1 text-[11px]"
-                  >
-                    {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copied ? 'Copied' : 'Copy'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Deposit Form */}
-              <form onSubmit={handleVerifyDeposit} className="space-y-3">
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1.5">
-                    Step 2: Paste SMS or Ethio Telecom Receipt URL:
-                  </label>
-                  <textarea
-                    rows={4}
-                    value={smsText}
-                    onChange={(e) => setSmsText(e.target.value)}
-                    placeholder="e.g. Your payment of 100 ETB to Robinson Solomon... receipt: https://transactioninfo.ethiotelecom.et/receipt/..."
-                    className="w-full bg-[#050807] border border-[#1f3127] rounded-xl p-3 text-white text-xs focus:outline-none focus:border-[#00e699] transition-colors placeholder:text-slate-600 font-mono"
-                  />
+                  )}
                 </div>
 
-                {depositError && (
-                  <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-2.5 text-rose-300 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-                    <span>{depositError}</span>
+                {/* Exact Instruction Message */}
+                <div className="bg-[#151f19] p-3.5 rounded-xl border border-[#1f3127] text-slate-200 text-xs sm:text-sm leading-relaxed">
+                  <p className="font-semibold text-white mb-2">
+                    How to Deposit:
+                  </p>
+                  <p className="text-slate-300">
+                    Send your ETB via Telebirr to{' '}
+                    <strong className="text-[#00e699] font-mono font-bold tracking-wider">
+                      {phoneNumber || '[YOUR PHONE NUMBER]'}
+                    </strong>
+                    . Then, close this game and paste your exact Telebirr SMS receipt into the bot chat.
+                  </p>
+                </div>
+
+                {/* Quick Copy Phone Pill */}
+                {phoneNumber && (
+                  <div className="flex items-center justify-between bg-[#0a140e] p-2.5 rounded-xl border border-[#1a2c20]">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Telebirr Number:</span>
+                      <span className="font-extrabold text-white font-mono text-sm tracking-wider">
+                        {phoneNumber}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyNumber}
+                      className="px-3 py-1.5 bg-[#151f19] hover:bg-[#1f3127] rounded-lg text-[#00e699] transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copied ? 'Copied' : 'Copy Number'}</span>
+                    </button>
                   </div>
                 )}
+              </div>
 
-                <button
-                  type="submit"
-                  disabled={isVerifying}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00e699] to-[#059669] hover:from-[#34d399] hover:to-[#10b981] text-[#050807] font-black text-sm tracking-wide transition-all shadow-[0_0_15px_rgba(0,230,153,0.4)] active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isVerifying ? 'VERIFYING WITH ETHIO TELECOM...' : 'VERIFY & INSTANT DEPOSIT'}
-                </button>
-              </form>
-            </>
+              {/* Action Button: Close to Send Receipt */}
+              <button
+                type="button"
+                onClick={handleCloseToSendReceipt}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#00e699] to-[#059669] hover:from-[#34d399] hover:to-[#10b981] text-[#050807] font-black text-sm tracking-wide transition-all shadow-[0_0_15px_rgba(0,230,153,0.4)] active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+              >
+                <span>Close to Send Receipt</span>
+              </button>
+            </div>
           ) : (
             /* Withdraw Form */
             <form onSubmit={handleWithdrawSubmit} className="space-y-3">
