@@ -233,7 +233,7 @@ app.get('/api/community-bets', (req, res) => {
 // ============================================================================
 // REAL BET PLACEMENT (DEBITING REAL ETB BALANCE)
 // ============================================================================
-app.post('/api/bet', (req, res) => {
+app.post('/api/bet', async (req, res) => {
   const { userId = 'default_user', chosenNumbers, stake } = req.body;
 
   if (!Array.isArray(chosenNumbers) || chosenNumbers.length < 1 || chosenNumbers.length > 10) {
@@ -243,6 +243,76 @@ app.post('/api/bet', (req, res) => {
   const parsedStake = Number(stake);
   if (isNaN(parsedStake) || parsedStake <= 0) {
     return res.status(400).json({ error: 'Invalid stake amount.' });
+  }
+
+  // If DATABASE_URL is configured, use Neon DB
+  if (process.env.DATABASE_URL) {
+    try {
+      const { neon } = await import('@neondatabase/serverless');
+      const sql = neon(process.env.DATABASE_URL);
+      const userResult = await sql`SELECT balance, bonus_balance, first_name FROM users WHERE telegram_id = ${String(userId)}`;
+
+      if (userResult.length > 0) {
+        const realBalance = parseFloat(String(userResult[0].balance)) || 0;
+        const bonusBalance = parseFloat(String(userResult[0].bonus_balance)) || 0;
+        const totalPlayableBalance = realBalance + bonusBalance;
+
+        if (totalPlayableBalance < parsedStake) {
+          return res.status(400).json({
+            error: `Insufficient balance! Your balance is ${totalPlayableBalance.toFixed(2)} ETB. Please deposit to play.`,
+          });
+        }
+
+        let newBonusBalance = bonusBalance;
+        let newRealBalance = realBalance;
+
+        if (bonusBalance >= parsedStake) {
+          newBonusBalance = bonusBalance - parsedStake;
+        } else {
+          const remainder = parsedStake - bonusBalance;
+          newBonusBalance = 0;
+          newRealBalance = realBalance - remainder;
+        }
+
+        newBonusBalance = Math.max(0, newBonusBalance);
+        newRealBalance = Math.max(0, newRealBalance);
+
+        await sql`
+          UPDATE users 
+          SET balance = ${newRealBalance.toFixed(2)}, bonus_balance = ${newBonusBalance.toFixed(2)} 
+          WHERE telegram_id = ${String(userId)}
+        `;
+
+        const drawIdStr = String(currentServerDrawId);
+        const now = new Date();
+        const timeStr = now.toTimeString().split(' ')[0];
+        const ticket: TicketItem = {
+          id: 't_' + Math.random().toString(36).substring(2, 9),
+          drawId: drawIdStr,
+          userId: String(userId),
+          userName: userResult[0].first_name || 'Player',
+          userMasked: `${(userResult[0].first_name || 'Player').slice(0, 3)}***`,
+          chosenNumbers: [...chosenNumbers].sort((a, b) => a - b),
+          stake: parsedStake,
+          timestamp: timeStr,
+          status: 'waiting',
+        };
+
+        if (!activeRoundTickets[userId]) {
+          activeRoundTickets[userId] = [];
+        }
+        activeRoundTickets[userId].unshift(ticket);
+
+        return res.json({
+          success: true,
+          ticket,
+          ticketsPlacedCount: activeRoundTickets[userId].length,
+          newBalance: parseFloat((newRealBalance + newBonusBalance).toFixed(2)),
+        });
+      }
+    } catch (neonErr) {
+      console.error('Neon DB bet placement error:', neonErr);
+    }
   }
 
   const user = db.getOrCreateUser(userId);
