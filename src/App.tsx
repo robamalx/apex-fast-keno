@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 
+// Tell TypeScript that Telegram exists on the global window object to prevent build failures
+declare global {
+  interface Window {
+    Telegram: any;
+  }
+}
+
 export default function App() {
   const [balance, setBalance] = useState('0.00');
   const [playerName, setPlayerName] = useState('Loading...');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Dynamically inject Telegram script for Vite
+    // Dynamically inject Telegram script
     const script = document.createElement('script');
     script.src = 'https://telegram.org/js/telegram-web-app.js';
     script.async = true;
@@ -23,6 +30,7 @@ export default function App() {
           
           if (user && user.id) {
             try {
+              // Vercel API routing format
               const res = await fetch(`/api/balance?telegram_id=${user.id}`);
               const data = await res.json();
               
@@ -40,7 +48,6 @@ export default function App() {
         }
       };
       
-      // Small delay to ensure Telegram object is fully registered
       setTimeout(initApp, 100);
     };
 
