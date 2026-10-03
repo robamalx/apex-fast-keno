@@ -1,61 +1,638 @@
-import { useEffect, useState } from 'react';
-
-// Tell TypeScript that Telegram exists on the global window object to prevent build failures
-declare global {
-  interface Window {
-    Telegram: any;
-  }
-}
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { HeaderNav, AppView } from './components/HeaderNav';
+import { CasinoLobbyView } from './components/CasinoLobbyView';
+import { FastKenoBoardStage } from './components/FastKenoBoardStage';
+import { LiveTicketFeed } from './components/LiveTicketFeed';
+import { RulesModal } from './components/RulesModal';
+import { CashierModal } from './components/CashierModal';
+import { VipModal } from './components/VipModal';
+import { ProfileModal } from './components/ProfileModal';
+import { MenuModal } from './components/MenuModal';
+import { AdminPanel } from './components/AdminPanel';
+import { ToastNotification, ToastItem } from './components/ToastNotification';
+import { haptic } from './utils/telegram';
+import { Ticket, DrawResult, CommunityBet, TelegramUser } from './types/keno';
+import { checkIsAuthorizedAdmin } from './config/adminConfig';
 
 export default function App() {
-  const [balance, setBalance] = useState('0.00');
-  const [playerName, setPlayerName] = useState('Loading...');
-  const [isLoading, setIsLoading] = useState(true);
+  // Navigation View State: Dedicated Fast Keno Mini App (Direct Launch into FAST_KENO)
+  const [currentView, setCurrentView] = useState<AppView>('FAST_KENO');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
-  useEffect(() => {
-    // Dynamically inject Telegram script
-    const script = document.createElement('script');
-    script.src = 'https://telegram.org/js/telegram-web-app.js';
-    script.async = true;
-    document.body.appendChild(script);
+  // Telegram User & Player Profile
+  const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
+  const [playerName, setPlayerName] = useState<string>('Player');
 
-    script.onload = () => {
-      const initApp = async () => {
-        if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-          const tg = window.Telegram.WebApp;
-          tg.ready();
-          tg.expand();
+  // Telebirr Configuration State
+  const [receiverName, setReceiverName] = useState<string>('Robinson Solomon');
+  const [phoneNumber, setPhoneNumber] = useState<string>('0963068117');
 
-          const user = tg.initDataUnsafe?.user;
-          
-          if (user && user.id) {
-            try {
-              // Vercel API routing format
-              const res = await fetch(`/api/balance?telegram_id=${user.id}`);
-              const data = await res.json();
-              
-              if (data.balance) {
-                setBalance(data.balance);
-                setPlayerName(data.first_name || user.first_name);
-              }
-            } catch (error) {
-              setPlayerName('Error loading data');
-            }
-          } else {
-            setPlayerName('Not opened via Telegram');
-          }
-          setIsLoading(false);
+  // Core Game State: Synchronized Round Loop
+  // Phase 1: BETTING (45s) -> Phase 2: DRAWING (20 balls @ 1.2s = 24s) -> Phase 3: RESET (2s + 3.5s)
+  // Default real account starting balance: 0.00 ETB (New users receive +20.00 ETB Welcome Bonus automatically)
+  const [balance, setBalance] = useState<number>(0);
+  const [currentDrawId, setCurrentDrawId] = useState<string>('890253779');
+  const [phase, setPhase] = useState<'betting' | 'drawing' | 'reset'>('betting');
+  const [timeRemaining, setTimeRemaining] = useState<number>(45); // 45s betting countdown
+  const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
+  const [stake, setStake] = useState<number>(2); // Default stake 2 ETB
+
+  // Ball Reveal Animation State
+  const [drawnBalls, setDrawnBalls] = useState<number[]>([]);
+  const [lastDrawnBall, setLastDrawnBall] = useState<number | undefined>(undefined);
+  const [lastRoundWinnings, setLastRoundWinnings] = useState<number>(0);
+  const [isDrawFinished, setIsDrawFinished] = useState<boolean>(false);
+
+  // Active & Historical Tickets & Draws
+  const [myTickets, setMyTickets] = useState<Ticket[]>([]); // Current round active tickets (pinned on top)
+  const [myBetsHistory, setMyBetsHistory] = useState<Ticket[]>([]);
+  const [recentDraws, setRecentDraws] = useState<DrawResult[]>([]);
+  const [communityBets, setCommunityBets] = useState<CommunityBet[]>([]);
+  const [totalCommunityCount, setTotalCommunityCount] = useState<number>(748);
+  const [hotNumbers, setHotNumbers] = useState<number[]>([7, 12, 23, 38, 45, 56, 64, 78]);
+  const [coldNumbers, setColdNumbers] = useState<number[]>([3, 19, 28, 31, 49, 52, 60, 73]);
+
+  // Audio / Sound Effects Setting
+  const [isAudioOn, setIsAudioOn] = useState<boolean>(true);
+
+  // Non-blocking Toast Notification State
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  // UI Modals State
+  const [isRulesOpen, setIsRulesOpen] = useState<boolean>(false);
+  const [isCashierOpen, setIsCashierOpen] = useState<boolean>(false);
+  const [isVipOpen, setIsVipOpen] = useState<boolean>(false);
+  const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
+  const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
+
+  // Refs for tracking in interval callbacks
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const myTicketsRef = useRef(myTickets);
+  myTicketsRef.current = myTickets;
+  const selectedNumbersRef = useRef(selectedNumbers);
+  selectedNumbersRef.current = selectedNumbers;
+
+  // Real persistent Telegram/Browser User ID
+  const getRealUserId = useCallback((): string => {
+    if (telegramUser?.id) return String(telegramUser.id);
+    let stored = localStorage.getItem('atlas_real_user_id');
+    if (!stored) {
+      stored = 'tg_' + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem('atlas_real_user_id', stored);
+    }
+    return stored;
+  }, [telegramUser]);
+
+  // Compute all unique numbers picked across active tickets of the player
+  const allPlayerChosenNumbers = Array.from(
+    new Set(myTickets.flatMap((t) => t.chosenNumbers))
+  );
+
+  // Authorized Telegram Admin Check (checks window.Telegram?.WebApp?.initDataUnsafe?.user?.id vs ADMIN_IDS)
+  const currentTelegramId = typeof window !== 'undefined'
+    ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id ?? telegramUser?.id
+    : telegramUser?.id;
+  const isAuthorizedAdmin = checkIsAuthorizedAdmin(currentTelegramId);
+
+  // Floating Non-intrusive Toast (Auto-fades after 2.5 seconds)
+  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    const id = 'toast_' + Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 2500);
+  };
+
+  // Fetch balance from /api/balance endpoint
+  const fetchNeonBalance = useCallback(async (telegramId: number | string) => {
+    try {
+      const res = await fetch(`/api/balance?telegram_id=${encodeURIComponent(telegramId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.balance !== undefined) {
+          setBalance(Number(data.balance));
         }
-      };
-      
-      setTimeout(initApp, 100);
-    };
-
-    return () => {
-      document.body.removeChild(script);
-    };
+        if (data.first_name) {
+          setPlayerName(data.first_name);
+        }
+      }
+    } catch {
+      // Fallback
+    }
   }, []);
 
+  // Fetch initial game state and configuration from real DB
+  const fetchGameState = useCallback(async () => {
+    try {
+      const userId = getRealUserId();
+      const name = telegramUser ? `${telegramUser.first_name || ''} ${telegramUser.last_name || ''}`.trim() : playerName;
+      const username = telegramUser?.username || '';
+      const res = await fetch(`/api/state?userId=${encodeURIComponent(userId)}&name=${encodeURIComponent(name)}&username=${encodeURIComponent(username)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBalance(data.balance);
+        if (data.welcomeBonusAwarded) {
+          showToast('🎁 Welcome Bonus Credited: +20.00 ETB ready to play!', 'success');
+        }
+        setCurrentDrawId(data.currentDrawId);
+        setMyTickets(data.myTickets || []);
+        setMyBetsHistory(data.myBetsHistory || []);
+        setRecentDraws(data.recentDraws || []);
+        if (data.hotNumbers) setHotNumbers(data.hotNumbers);
+        if (data.coldNumbers) setColdNumbers(data.coldNumbers);
+        if (data.receiverName) setReceiverName(data.receiverName);
+        if (data.phoneNumber) setPhoneNumber(data.phoneNumber);
+      }
+    } catch {
+      // Offline fallback
+    }
+  }, [getRealUserId, telegramUser, playerName]);
+
+  // Telegram Mini App Script Injection & Initialization
+  useEffect(() => {
+    let script = document.querySelector('script[src="https://telegram.org/js/telegram-web-app.js"]') as HTMLScriptElement | null;
+    let didCreateScript = false;
+
+    const initializeTelegram = () => {
+      if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+        if (typeof tg.enableVerticalSwipes === 'function') {
+          tg.enableVerticalSwipes();
+        }
+
+        const user = tg.initDataUnsafe?.user;
+        if (user) {
+          setTelegramUser(user);
+          setPlayerName(user.first_name || 'Player');
+          if (user.id) {
+            fetchNeonBalance(user.id);
+          }
+        }
+      }
+    };
+
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://telegram.org/js/telegram-web-app.js';
+      script.async = true;
+      document.body.appendChild(script);
+      didCreateScript = true;
+      script.onload = () => {
+        setTimeout(initializeTelegram, 50);
+      };
+    } else {
+      setTimeout(initializeTelegram, 50);
+    }
+
+    return () => {
+      if (didCreateScript && script && document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+    };
+  }, [fetchNeonBalance]);
+
+  // Fetch virtual player community bets (500 - 1,000 player simulation)
+  const fetchCommunityBets = useCallback(async () => {
+    try {
+      const q = new URLSearchParams({
+        drawId: currentDrawId,
+        timeRemaining: String(timeRemaining),
+        phase: phaseRef.current,
+        drawnBalls: JSON.stringify(drawnBalls),
+      });
+      const res = await fetch(`/api/community-bets?${q.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.bets) {
+          setCommunityBets(data.bets);
+          if (data.totalCount) setTotalCommunityCount(data.totalCount);
+        } else if (Array.isArray(data)) {
+          setCommunityBets(data);
+          setTotalCommunityCount(data.length);
+        }
+      }
+    } catch {
+      // Fallback
+    }
+  }, [currentDrawId, timeRemaining, drawnBalls]);
+
+  useEffect(() => {
+    fetchGameState();
+    fetchCommunityBets();
+
+    const interval = setInterval(fetchCommunityBets, 3500);
+    return () => clearInterval(interval);
+  }, [fetchGameState, fetchCommunityBets, currentDrawId, drawnBalls.length]);
+
+  // Sequential 20-Ball Reveal (Step-by-Step, 1 Ball every 1.2 Seconds)
+  const triggerDrawSequence = async () => {
+    setDrawnBalls([]);
+    setLastDrawnBall(undefined);
+    setIsDrawFinished(false);
+    setLastRoundWinnings(0);
+
+    try {
+      const userId = getRealUserId();
+      const res = await fetch('/api/draw/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+
+      if (!res.ok) {
+        setPhase('betting');
+        setTimeRemaining(45);
+        return;
+      }
+
+      const data = await res.json();
+      const fullDrawList: number[] = data.drawnNumbers; // 20 unique balls
+      let currentIndex = 0;
+
+      const playerTicketNumbers = new Set(
+        myTicketsRef.current.flatMap((t) => t.chosenNumbers)
+      );
+
+      const drawInterval = setInterval(() => {
+        if (currentIndex < fullDrawList.length) {
+          const ball = fullDrawList[currentIndex];
+          setDrawnBalls((prev) => [...prev, ball]);
+          setLastDrawnBall(ball);
+
+          const isPlayerHit = playerTicketNumbers.has(ball) || selectedNumbersRef.current.includes(ball);
+          if (isPlayerHit) {
+            haptic.hitReveal();
+          } else {
+            haptic.ballReveal();
+          }
+
+          currentIndex++;
+        } else {
+          clearInterval(drawInterval);
+
+          // All 20 balls drawn: Conclude round and show inline banner immediately
+          setIsDrawFinished(true);
+          setCurrentDrawId(data.nextDrawId);
+          setRecentDraws(data.recentDraws);
+
+          // Update payouts for active tickets
+          if (data.resolvedTickets && data.resolvedTickets.length > 0) {
+            setMyTickets(data.resolvedTickets);
+          }
+
+          const finalWinnings = data.totalWinnings || 0;
+          setLastRoundWinnings(finalWinnings);
+
+          if (finalWinnings > 0) {
+            // Roll winnings into header balance directly
+            setBalance(data.newBalance ?? (balance + finalWinnings));
+            haptic.notification('success');
+          } else if (myTicketsRef.current.length > 0) {
+            haptic.notification('error');
+          }
+
+          // Automatic Transition: Keep inline banner message visible for 2 seconds.
+          setTimeout(() => {
+            setIsDrawFinished(false);
+            setDrawnBalls([]);
+            setLastDrawnBall(undefined);
+            setLastRoundWinnings(0);
+            setSelectedNumbers([]);
+            setMyTickets([]);
+            setPhase('betting');
+            setTimeRemaining(45);
+          }, 2000);
+        }
+      }, 1200); // 1.2s per ball
+    } catch {
+      setPhase('betting');
+      setTimeRemaining(45);
+    }
+  };
+
+  // Synchronized Round Countdown Loop (Controls betting phase)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (phaseRef.current === 'betting') {
+          if (prev > 1) {
+            return prev - 1;
+          }
+          // Timer reached 00:00: Transition to drawing phase
+          setPhase('drawing');
+          triggerDrawSequence();
+          return 0;
+        }
+        return prev;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Toggle Number Selection on Keno Board
+  const handleToggleNumber = (num: number) => {
+    if (phase !== 'betting') return;
+    haptic.selection();
+
+    setSelectedNumbers((prev) => {
+      if (prev.includes(num)) {
+        return prev.filter((n) => n !== num);
+      } else {
+        if (prev.length >= 10) {
+          haptic.notification('warning');
+          return prev;
+        }
+        return [...prev, num].sort((a, b) => a - b);
+      }
+    });
+  };
+
+  // Clear Selection
+  const handleClearSelection = () => {
+    haptic.selection();
+    setSelectedNumbers([]);
+  };
+
+  // Quick Pick
+  const handleQuickPick = (count: number) => {
+    haptic.selection();
+    const picked: number[] = [];
+    while (picked.length < count) {
+      const rand = Math.floor(Math.random() * 80) + 1;
+      if (!picked.includes(rand)) picked.push(rand);
+    }
+    picked.sort((a, b) => a - b);
+    setSelectedNumbers(picked);
+  };
+
+  // Multi-Ticket Placement with Selection Auto-Clear
+  const handlePlaceBet = async () => {
+    if (phase !== 'betting') return;
+
+    if (selectedNumbers.length === 0) {
+      haptic.notification('warning');
+      showToast('Select 1 to 10 numbers first!', 'error');
+      return;
+    }
+
+    if (myTickets.length >= 20) {
+      haptic.notification('warning');
+      showToast('Max 20 tickets reached for this draw!', 'error');
+      return;
+    }
+
+    if (balance < stake) {
+      haptic.notification('error');
+      showToast('Insufficient balance! Tap Deposit to add real ETB funds.', 'error');
+      setIsCashierOpen(true);
+      return;
+    }
+
+    haptic.impact('heavy');
+
+    try {
+      const userId = getRealUserId();
+      const numbersToSubmit = [...selectedNumbers];
+
+      const res = await fetch('/api/bet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          chosenNumbers: numbersToSubmit,
+          stake,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.error || 'Failed to place ticket.', 'error');
+        haptic.notification('error');
+        return;
+      }
+
+      setBalance(data.newBalance);
+      setMyTickets((prev) => [data.ticket, ...prev]);
+
+      // Immediately clear the selected numbers for the next ticket
+      setSelectedNumbers([]);
+
+      haptic.notification('success');
+      showToast(`Ticket #${data.ticketsPlacedCount} Placed (${stake.toFixed(2)} ETB)`, 'info');
+    } catch {
+      showToast('Network error placing ticket.', 'error');
+    }
+  };
+
+  const handleDepositVerified = (_creditedAmount: number, newBalance: number) => {
+    setBalance(newBalance);
+  };
+
+  const handleWithdrawSubmitted = (newBalance: number) => {
+    setBalance(newBalance);
+  };
+
+  const handleClaimDailyBonus = async () => {
+    const userId = getRealUserId();
+    try {
+      const res = await fetch('/api/wallet/claim-bonus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          amount: 50,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBalance(data.newBalance);
+      } else {
+        setBalance((prev) => prev + 50);
+      }
+    } catch {
+      setBalance((prev) => prev + 50);
+    }
+    showToast('+50.00 ETB Daily VIP Bonus Claimed!', 'success');
+    setIsVipOpen(false);
+  };
+
   return (
-    
-      {isLoading ? (
+    <div className="w-full min-h-screen flex flex-col bg-[#060907] overflow-y-auto overflow-x-hidden pb-8">
+      {/* Floating Non-Intrusive Toast Notification Overlay */}
+      <ToastNotification toasts={toasts} />
+
+      {/* Top Mini Header Displaying Player Name & Balance */}
+      <div className="w-full bg-[#030604] border-b border-[#142319] px-3 py-1 flex items-center justify-between text-[11px] text-slate-300 font-mono select-none">
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#00e699] animate-pulse" />
+          <span className="text-slate-400">Player:</span>
+          <span className="font-bold text-white truncate max-w-[130px] sm:max-w-[200px]">
+            {playerName}
+          </span>
+          {telegramUser?.username && (
+            <span className="text-slate-500 hidden sm:inline">(@{telegramUser.username})</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-slate-400">Balance:</span>
+          <span className="font-black text-[#facc15] font-mono tabular-nums">{balance.toFixed(2)} ETB</span>
+        </div>
+      </div>
+
+      {/* Main Top Header Navigation Row + Sub-Header */}
+      <div className="shrink-0 z-30 sticky top-0 bg-[#060907]">
+        <HeaderNav
+          balance={balance}
+          drawId={currentDrawId}
+          onOpenCashier={() => setIsCashierOpen(true)}
+          onOpenMenu={() => setIsMenuOpen(true)}
+          onOpenProfile={() => setIsProfileOpen(true)}
+          onOpenAdmin={() => setIsAdminOpen(true)}
+          onRefresh={fetchGameState}
+          currentView={currentView}
+          onNavigate={(view) => {
+            setCurrentView(view);
+          }}
+          searchQuery={searchQuery}
+          onSearchChange={(q) => setSearchQuery(q)}
+          isAuthorizedAdmin={isAuthorizedAdmin}
+        />
+      </div>
+
+      {/* Main Content Area based on currentView */}
+      <main className="flex-1 w-full max-w-4xl mx-auto px-2 sm:px-3 pt-2 flex flex-col space-y-3">
+        {currentView === 'LOBBY' ? (
+          /* ============================================================
+             VIEW 1: CASINO & FAST KENO LOBBY
+             - Live Ticker: Recent Keno Hits
+             - Spotlight: Fast Keno (Classic 1-80)
+             - Upcoming Keno Releases
+             ============================================================ */
+          <CasinoLobbyView
+            onPlayKeno={() => {
+              setCurrentView('FAST_KENO');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onOpenRules={() => setIsRulesOpen(true)}
+            onOpenCashier={() => setIsCashierOpen(true)}
+            showToast={showToast}
+            currentDrawId={currentDrawId}
+            timeRemaining={timeRemaining}
+            balance={balance}
+            searchQuery={searchQuery}
+          />
+        ) : (
+          /* ============================================================
+             VIEW 2: FAST KENO PLAY CONSOLE (DEFAULT DIRECT LAUNCH)
+             - Permanent HUD / Chute Tray
+             - 8x10 Number Board & Bet Controls
+             - Active Tickets Feed + 500-1,000 Virtual Community Simulation
+             ============================================================ */
+          <>
+            <div className="w-full">
+              <FastKenoBoardStage
+                phase={phase}
+                selectedNumbers={selectedNumbers}
+                onToggleNumber={handleToggleNumber}
+                onClearSelection={handleClearSelection}
+                onQuickPick={handleQuickPick}
+                stake={stake}
+                setStake={setStake}
+                onPlaceBet={handlePlaceBet}
+                timeRemaining={timeRemaining}
+                ticketsPlacedCount={myTickets.length}
+                onOpenRules={() => setIsRulesOpen(true)}
+                balance={balance}
+                hotNumbers={hotNumbers}
+                coldNumbers={coldNumbers}
+                drawnBalls={drawnBalls}
+                lastDrawnBall={lastDrawnBall}
+                allPlayerChosenNumbers={allPlayerChosenNumbers}
+                totalWinnings={lastRoundWinnings}
+                isDrawFinished={isDrawFinished}
+                hasActiveTickets={myTickets.length > 0}
+              />
+            </div>
+
+            <div className="w-full">
+              <LiveTicketFeed
+                myTickets={myTickets}
+                communityBets={communityBets}
+                recentDraws={recentDraws}
+                drawnBalls={drawnBalls}
+                isDrawing={phase === 'drawing'}
+                isResetPhase={phase === 'reset'}
+                isDrawFinished={isDrawFinished}
+                currentDrawId={currentDrawId}
+                onOpenVipModal={() => setIsVipOpen(true)}
+                hotNumbers={hotNumbers}
+                coldNumbers={coldNumbers}
+                totalCommunityCount={totalCommunityCount}
+              />
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* Modals & Menus */}
+      <RulesModal isOpen={isRulesOpen} onClose={() => setIsRulesOpen(false)} />
+      <CashierModal
+        isOpen={isCashierOpen}
+        onClose={() => setIsCashierOpen(false)}
+        balance={balance}
+        receiverName={receiverName}
+        phoneNumber={phoneNumber}
+        userId={getRealUserId()}
+        onDepositVerified={handleDepositVerified}
+        onWithdrawSubmitted={handleWithdrawSubmitted}
+        showToast={showToast}
+      />
+      <VipModal
+        isOpen={isVipOpen}
+        onClose={() => setIsVipOpen(false)}
+        onClaimDailyBonus={handleClaimDailyBonus}
+      />
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        telegramUser={telegramUser}
+        balance={balance}
+        onOpenCashier={() => {
+          setIsProfileOpen(false);
+          setIsCashierOpen(true);
+        }}
+        ticketsCount={myTickets.length}
+      />
+      <MenuModal
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        onOpenRules={() => {
+          setIsMenuOpen(false);
+          setIsRulesOpen(true);
+        }}
+        onOpenCashier={() => {
+          setIsMenuOpen(false);
+          setIsCashierOpen(true);
+        }}
+        onOpenAdmin={() => {
+          setIsMenuOpen(false);
+          setIsAdminOpen(true);
+        }}
+        isAudioOn={isAudioOn}
+        onToggleAudio={() => setIsAudioOn(!isAudioOn)}
+        isAuthorizedAdmin={isAuthorizedAdmin}
+      />
+      <AdminPanel
+        isOpen={isAdminOpen}
+        onClose={() => setIsAdminOpen(false)}
+        showToast={showToast}
+      />
+    </div>
+  );
+}

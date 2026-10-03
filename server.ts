@@ -119,6 +119,36 @@ function generateKenoDrawPRNG(): { drawnNumbers: number[] } {
 // ============================================================================
 // CONFIG & TELEGRAM VALIDATION
 // ============================================================================
+app.get('/api/balance', async (req, res) => {
+  const telegramId = (req.query.telegram_id as string) || (req.query.telegramId as string);
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Missing telegram_id' });
+  }
+
+  if (process.env.DATABASE_URL) {
+    try {
+      const { neon } = await import('@neondatabase/serverless');
+      const sql = neon(process.env.DATABASE_URL);
+      const result = await sql`SELECT balance, first_name FROM users WHERE telegram_id = ${telegramId}`;
+      if (result.length > 0) {
+        return res.json({
+          balance: String(result[0].balance ?? '0.00'),
+          first_name: result[0].first_name || 'Player',
+        });
+      }
+      return res.json({ balance: '0.00', first_name: 'Player' });
+    } catch (err) {
+      console.error('Neon query error in local server:', err);
+    }
+  }
+
+  const user = db.getOrCreateUser(telegramId);
+  return res.json({
+    balance: user.balance.toFixed(2),
+    first_name: user.name || 'Player',
+  });
+});
+
 app.get('/api/config', (req, res) => {
   res.json({
     receiverName: TELEBIRR_AGENT_NAME,

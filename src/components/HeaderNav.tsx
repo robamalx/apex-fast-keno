@@ -67,7 +67,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           title="Return to Lobby"
         >
           <div className="italic font-black text-base sm:text-lg tracking-wider transform -skew-x-6 flex items-center drop-shadow-[0_0_10px_rgba(0,230,153,0.5)]">
-            <span className="text-[#00e699] group-hover:text-[#34d399] transition-colors">FAST</span>
+            <span className="text-red-500 group-hover:text-red-400 transition-colors">FAST</span>
             <span className="text-white ml-1">KENO</span>
           </div>
         </div>
