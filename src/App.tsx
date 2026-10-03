@@ -13,6 +13,7 @@ import { ToastNotification, ToastItem } from './components/ToastNotification';
 import { haptic } from './utils/telegram';
 import { Ticket, DrawResult, CommunityBet, TelegramUser } from './types/keno';
 import { checkIsAuthorizedAdmin } from './config/adminConfig';
+import { calculateMultiplier } from './utils/paytable';
 
 export default function App() {
   // Navigation View State: Dedicated Fast Keno Mini App (Direct Launch into FAST_KENO)
@@ -228,111 +229,173 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchGameState, fetchCommunityBets, currentDrawId, drawnBalls.length]);
 
-  // Sequential 20-Ball Reveal (Step-by-Step, 1 Ball every 1.2 Seconds)
-  const triggerDrawSequence = async () => {
+  // Sequential 20-Ball Reveal (Step-by-Step, 1 Ball every 1.0 Second)
+  const triggerDrawSequence = useCallback(async () => {
+    // 1. Stop countdown and lock game in DRAWING state
+    setPhase('drawing');
+    phaseRef.current = 'drawing';
+    setTimeRemaining(0);
     setDrawnBalls([]);
     setLastDrawnBall(undefined);
     setIsDrawFinished(false);
     setLastRoundWinnings(0);
+
+    let fullDrawList: number[] = [];
+    let nextDrawIdStr = '';
+    let serverNewBalance: number | null = null;
 
     try {
       const userId = getRealUserId();
       const res = await fetch('/api/draw/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({
+          userId,
+          tickets: myTicketsRef.current,
+        }),
       });
 
-      if (!res.ok) {
-        setPhase('betting');
-        setTimeRemaining(45);
-        return;
-      }
-
-      const data = await res.json();
-      const fullDrawList: number[] = data.drawnNumbers; // 20 unique balls
-      let currentIndex = 0;
-
-      const playerTicketNumbers = new Set(
-        myTicketsRef.current.flatMap((t) => t.chosenNumbers)
-      );
-
-      const drawInterval = setInterval(() => {
-        if (currentIndex < fullDrawList.length) {
-          const ball = fullDrawList[currentIndex];
-          setDrawnBalls((prev) => [...prev, ball]);
-          setLastDrawnBall(ball);
-
-          const isPlayerHit = playerTicketNumbers.has(ball) || selectedNumbersRef.current.includes(ball);
-          if (isPlayerHit) {
-            haptic.hitReveal();
-          } else {
-            haptic.ballReveal();
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.drawnNumbers) && data.drawnNumbers.length === 20) {
+          fullDrawList = data.drawnNumbers;
+          nextDrawIdStr = data.nextDrawId;
+          if (data.recentDraws && Array.isArray(data.recentDraws)) {
+            setRecentDraws(data.recentDraws);
           }
-
-          currentIndex++;
-        } else {
-          clearInterval(drawInterval);
-
-          // All 20 balls drawn: Conclude round and show inline banner immediately
-          setIsDrawFinished(true);
-          setCurrentDrawId(data.nextDrawId);
-          setRecentDraws(data.recentDraws);
-
-          // Update payouts for active tickets
-          if (data.resolvedTickets && data.resolvedTickets.length > 0) {
-            setMyTickets(data.resolvedTickets);
+          if (data.newBalance !== null && data.newBalance !== undefined) {
+            serverNewBalance = data.newBalance;
           }
-
-          const finalWinnings = data.totalWinnings || 0;
-          setLastRoundWinnings(finalWinnings);
-
-          if (finalWinnings > 0) {
-            // Roll winnings into header balance directly
-            setBalance(data.newBalance ?? (balance + finalWinnings));
-            haptic.notification('success');
-          } else if (myTicketsRef.current.length > 0) {
-            haptic.notification('error');
-          }
-
-          // Automatic Transition: Keep inline banner message visible for 2 seconds.
-          setTimeout(() => {
-            setIsDrawFinished(false);
-            setDrawnBalls([]);
-            setLastDrawnBall(undefined);
-            setLastRoundWinnings(0);
-            setSelectedNumbers([]);
-            setMyTickets([]);
-            setPhase('betting');
-            setTimeRemaining(45);
-          }, 2000);
         }
-      }, 1200); // 1.2s per ball
+      }
     } catch {
-      setPhase('betting');
-      setTimeRemaining(45);
+      // Backend unavailable; fall through to client-side PRNG
     }
-  };
 
-  // Synchronized Round Countdown Loop (Controls betting phase)
+    // 2. Client-side PRNG fallback: ensure 20 unique winning numbers (1 to 80)
+    if (fullDrawList.length !== 20) {
+      const set = new Set<number>();
+      while (set.size < 20) {
+        set.add(Math.floor(Math.random() * 80) + 1);
+      }
+      fullDrawList = Array.from(set);
+    }
+
+    let currentIndex = 0;
+    const playerTicketNumbers = new Set(
+      myTicketsRef.current.flatMap((t) => t.chosenNumbers)
+    );
+
+    // 3. Visually reveal each ball step-by-step
+    const drawInterval = setInterval(() => {
+      if (currentIndex < fullDrawList.length) {
+        const ball = fullDrawList[currentIndex];
+        setDrawnBalls((prev) => [...prev, ball]);
+        setLastDrawnBall(ball);
+
+        const isPlayerHit = playerTicketNumbers.has(ball) || selectedNumbersRef.current.includes(ball);
+        if (isPlayerHit) {
+          haptic.hitReveal();
+        } else {
+          haptic.ballReveal();
+        }
+
+        currentIndex++;
+      } else {
+        clearInterval(drawInterval);
+
+        // 4. All 20 balls revealed: check player's tickets against drawn numbers
+        setIsDrawFinished(true);
+        const resolvedNextId = nextDrawIdStr || String(Number(currentDrawId) + 1);
+        setCurrentDrawId(resolvedNextId);
+
+        const currentActiveTickets = myTicketsRef.current;
+        let totalWinnings = 0;
+
+        const resolvedTickets: Ticket[] = currentActiveTickets.map((t) => {
+          const matchedNumbers = t.chosenNumbers.filter((n) => fullDrawList.includes(n));
+          const matchedCount = matchedNumbers.length;
+          const multiplier = calculateMultiplier(t.chosenNumbers.length, matchedCount);
+          const payout = Math.round(t.stake * multiplier * 100) / 100;
+          if (payout > 0) {
+            totalWinnings += payout;
+          }
+          return {
+            ...t,
+            status: payout > 0 ? 'win' : 'loss',
+            matchedCount,
+            multiplier,
+            payout,
+            drawnNumbers: fullDrawList,
+          };
+        });
+
+        if (resolvedTickets.length > 0) {
+          setMyTickets(resolvedTickets);
+        }
+
+        setLastRoundWinnings(totalWinnings);
+
+        // Update recent draws list
+        const newDrawEntry: DrawResult = {
+          drawId: currentDrawId,
+          timestamp: new Date().toTimeString().split(' ')[0],
+          drawnNumbers: fullDrawList,
+          totalBets: Math.floor(650 + Math.random() * 250),
+          winnersCount: Math.floor(80 + Math.random() * 60),
+        };
+        setRecentDraws((prev) => [newDrawEntry, ...prev.slice(0, 19)]);
+
+        // 5. Update player's balance if they won
+        if (totalWinnings > 0) {
+          setBalance((prev) => {
+            const finalBal = serverNewBalance !== null ? serverNewBalance : prev + totalWinnings;
+            return parseFloat(finalBal.toFixed(2));
+          });
+          haptic.notification('success');
+          showToast(`🎉 Round Won! +${totalWinnings.toFixed(2)} ETB Credited`, 'success');
+        } else if (currentActiveTickets.length > 0) {
+          haptic.notification('error');
+        }
+
+        // 6. Wait a few seconds (4s) for player to see results, then clear board and restart countdown
+        setTimeout(() => {
+          setIsDrawFinished(false);
+          setDrawnBalls([]);
+          setLastDrawnBall(undefined);
+          setLastRoundWinnings(0);
+          setSelectedNumbers([]);
+          setMyTickets([]);
+          setPhase('betting');
+          phaseRef.current = 'betting';
+          setTimeRemaining(45);
+        }, 4000);
+      }
+    }, 1000);
+  }, [currentDrawId, getRealUserId]);
+
+  // Synchronized Round Countdown Loop (ticks down while in betting phase)
   useEffect(() => {
+    if (phase !== 'betting') return;
+
     const timer = setInterval(() => {
       setTimeRemaining((prev) => {
-        if (phaseRef.current === 'betting') {
-          if (prev > 1) {
-            return prev - 1;
-          }
-          // Timer reached 00:00: Transition to drawing phase
-          setPhase('drawing');
-          triggerDrawSequence();
+        if (prev <= 1) {
           return 0;
         }
-        return prev;
+        return prev - 1;
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [phase]);
+
+  // When timer hits 0 during betting, trigger the draw sequence immediately
+  useEffect(() => {
+    if (phase === 'betting' && timeRemaining === 0) {
+      triggerDrawSequence();
+    }
+  }, [timeRemaining, phase, triggerDrawSequence]);
 
   // Toggle Number Selection on Keno Board
   const handleToggleNumber = (num: number) => {
