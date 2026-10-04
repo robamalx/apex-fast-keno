@@ -79,6 +79,12 @@ export default function App() {
   myTicketsRef.current = myTickets;
   const selectedNumbersRef = useRef(selectedNumbers);
   selectedNumbersRef.current = selectedNumbers;
+  const timeRemainingRef = useRef(timeRemaining);
+  timeRemainingRef.current = timeRemaining;
+  const currentDrawIdRef = useRef(currentDrawId);
+  currentDrawIdRef.current = currentDrawId;
+  const drawnBallsRef = useRef(drawnBalls);
+  drawnBallsRef.current = drawnBalls;
 
   // Real persistent Telegram/Browser User ID
   const getRealUserId = useCallback((): string => {
@@ -138,14 +144,24 @@ export default function App() {
       const res = await fetch(`/api/state?userId=${encodeURIComponent(userId)}&name=${encodeURIComponent(name)}&username=${encodeURIComponent(username)}`);
       if (res.ok) {
         const data = await res.json();
-        setBalance(data.balance);
+        if (data.balance !== undefined) setBalance(data.balance);
+        if (data.bonus_balance !== undefined) setBonus(data.bonus_balance);
         if (data.welcomeBonusAwarded) {
           showToast('🎁 Welcome Bonus Credited: +20.00 ETB ready to play!', 'success');
         }
-        setCurrentDrawId(data.currentDrawId);
-        setMyTickets(data.myTickets || []);
-        setMyBetsHistory(data.myBetsHistory || []);
-        setRecentDraws(data.recentDraws || []);
+        if (data.currentDrawId) {
+          setCurrentDrawId(data.currentDrawId);
+        }
+        // Protect local tickets: only update if data.myTickets actually contains items
+        if (Array.isArray(data.myTickets) && data.myTickets.length > 0) {
+          setMyTickets(data.myTickets);
+        }
+        if (Array.isArray(data.myBetsHistory)) {
+          setMyBetsHistory(data.myBetsHistory);
+        }
+        if (Array.isArray(data.recentDraws) && data.recentDraws.length > 0) {
+          setRecentDraws(data.recentDraws);
+        }
         if (data.hotNumbers) setHotNumbers(data.hotNumbers);
         if (data.coldNumbers) setColdNumbers(data.coldNumbers);
         if (data.receiverName) setReceiverName(data.receiverName);
@@ -258,10 +274,10 @@ export default function App() {
   const fetchCommunityBets = useCallback(async () => {
     try {
       const q = new URLSearchParams({
-        drawId: currentDrawId,
-        timeRemaining: String(timeRemaining),
+        drawId: currentDrawIdRef.current,
+        timeRemaining: String(timeRemainingRef.current),
         phase: phaseRef.current,
-        drawnBalls: JSON.stringify(drawnBalls),
+        drawnBalls: JSON.stringify(drawnBallsRef.current),
       });
       const res = await fetch(`/api/community-bets?${q.toString()}`);
       if (res.ok) {
@@ -277,15 +293,27 @@ export default function App() {
     } catch {
       // Fallback
     }
-  }, [currentDrawId, timeRemaining, drawnBalls]);
+  }, []);
 
+  // 1. Isolate fetchGameState: ONLY runs when isRegistered becomes true (loads initial data once)
   useEffect(() => {
-    fetchGameState();
+    if (isRegistered) {
+      fetchGameState();
+    }
+  }, [isRegistered, fetchGameState]);
+
+  // 2. Isolate the Interval: separate useEffect just for polling community bets every 3.5s
+  useEffect(() => {
+    if (!isRegistered) return;
+
     fetchCommunityBets();
 
-    const interval = setInterval(fetchCommunityBets, 3500);
+    const interval = setInterval(() => {
+      fetchCommunityBets();
+    }, 3500);
+
     return () => clearInterval(interval);
-  }, [fetchGameState, fetchCommunityBets, currentDrawId, drawnBalls.length]);
+  }, [isRegistered, fetchCommunityBets]);
 
   // Winning function: All winnings go straight to the real cash balance
   const handleWin = useCallback((winAmount: number) => {

@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   let bonus_balance = 0;
   let myTickets = [];
   let myBetsHistory = [];
-  const currentDrawId = String(Date.now()).slice(-9);
+  const currentDrawId = req.query?.currentDrawId || '890253779';
 
   if (process.env.DATABASE_URL && userId && userId !== 'default_user') {
     try {
