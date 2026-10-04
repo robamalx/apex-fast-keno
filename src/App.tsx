@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Lock } from 'lucide-react';
 import { HeaderNav, AppView } from './components/HeaderNav';
 import { CasinoLobbyView } from './components/CasinoLobbyView';
 import { FastKenoBoardStage } from './components/FastKenoBoardStage';
@@ -23,6 +24,10 @@ export default function App() {
   // Telegram User & Player Profile
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
   const [playerName, setPlayerName] = useState<string>('Player');
+
+  // Registration & Access Control State (Cloudflare Worker Integration)
+  const [isCheckingRegistration, setIsCheckingRegistration] = useState<boolean>(true);
+  const [isRegistered, setIsRegistered] = useState<boolean>(false);
 
   // Telebirr Configuration State
   const [receiverName, setReceiverName] = useState<string>('Robinson Solomon');
@@ -151,6 +156,57 @@ export default function App() {
     }
   }, [getRealUserId, telegramUser, playerName]);
 
+  // Check registration and balance via Cloudflare Worker
+  const checkUserRegistration = useCallback(async (explicitId?: number | string) => {
+    setIsCheckingRegistration(true);
+
+    const tgId =
+      explicitId ||
+      (typeof window !== 'undefined'
+        ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id
+        : undefined);
+
+    if (!tgId) {
+      setIsRegistered(false);
+      setIsCheckingRegistration(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `https://apex-keno-bot.robinsonslmn.workers.dev?telegram_id=${encodeURIComponent(tgId)}`
+      );
+
+      if (!res.ok) {
+        setIsRegistered(false);
+        setIsCheckingRegistration(false);
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data && data.registered) {
+        setIsRegistered(true);
+        // Real database balance (balance + bonus_balance)
+        const realBal = parseFloat(String(data.user?.balance ?? 0)) || 0;
+        const bonusBal = parseFloat(String(data.user?.bonus_balance ?? 0)) || 0;
+        const totalPlayableBalance = parseFloat((realBal + bonusBal).toFixed(2));
+        setBalance(totalPlayableBalance);
+
+        if (data.user?.first_name) {
+          setPlayerName(data.user.first_name);
+        }
+      } else {
+        setIsRegistered(false);
+      }
+    } catch (err) {
+      console.error('Registration verification error:', err);
+      setIsRegistered(false);
+    } finally {
+      setIsCheckingRegistration(false);
+    }
+  }, []);
+
   // Telegram Mini App Script Injection & Initialization
   useEffect(() => {
     let script = document.querySelector('script[src="https://telegram.org/js/telegram-web-app.js"]') as HTMLScriptElement | null;
@@ -169,10 +225,12 @@ export default function App() {
         if (user) {
           setTelegramUser(user);
           setPlayerName(user.first_name || 'Player');
-          if (user.id) {
-            fetchNeonBalance(user.id);
-          }
+          checkUserRegistration(user.id);
+        } else {
+          checkUserRegistration();
         }
+      } else {
+        checkUserRegistration();
       }
     };
 
@@ -194,7 +252,7 @@ export default function App() {
         document.body.removeChild(script);
       }
     };
-  }, [fetchNeonBalance]);
+  }, [checkUserRegistration]);
 
   // Fetch virtual player community bets (500 - 1,000 player simulation)
   const fetchCommunityBets = useCallback(async () => {
@@ -525,6 +583,68 @@ export default function App() {
     setIsVipOpen(false);
   };
 
+  // 1. Loading Screen: Displayed while verifying Telegram registration
+  if (isCheckingRegistration) {
+    return (
+      <div className="min-h-screen bg-[#060907] flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-[#0b1410] border border-[#1f3127] flex items-center justify-center shadow-2xl relative">
+            <div className="w-8 h-8 rounded-full border-2 border-[#00e699] border-t-transparent animate-spin" />
+          </div>
+          <div className="text-center space-y-1">
+            <h2 className="text-sm sm:text-base font-extrabold tracking-wider text-white">APEX FAST KENO</h2>
+            <p className="text-xs text-slate-400">Verifying account credentials...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Lock Screen: Displayed if user is not registered or has no Telegram ID
+  if (!isRegistered) {
+    const handleCloseToBot = () => {
+      haptic.selection();
+      try {
+        if (typeof window !== 'undefined' && window.Telegram?.WebApp?.close) {
+          window.Telegram.WebApp.close();
+        }
+      } catch (err) {
+        console.warn('Telegram WebApp close error:', err);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-[#060907] flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="w-full max-w-sm bg-[#0b1410] border border-[#1f3127] rounded-3xl p-6 shadow-2xl text-center space-y-5 animate-fadeIn">
+          {/* Lock Icon */}
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-inner">
+            <Lock className="w-8 h-8 text-amber-400" />
+          </div>
+
+          {/* Heading with required warning copy */}
+          <div className="space-y-2">
+            <h1 className="text-lg sm:text-xl font-black text-white tracking-wide leading-snug">
+              ⚠️ Not Registered: You must register in the chat to play.
+            </h1>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Please return to the bot chat to register your account before playing.
+            </p>
+          </div>
+
+          {/* Action button to return to bot */}
+          <button
+            type="button"
+            onClick={handleCloseToBot}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-black font-black text-sm tracking-wide transition-all shadow-[0_0_20px_rgba(245,158,11,0.3)] active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+          >
+            <span>Close to Return to Bot</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Main Game UI: Rendered normally when registered === true
   return (
     <div className="w-full min-h-screen flex flex-col bg-[#060907] overflow-y-auto overflow-x-hidden pb-8">
       {/* Floating Non-Intrusive Toast Notification Overlay */}
