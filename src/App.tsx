@@ -300,13 +300,7 @@ export default function App() {
           setCurrentDrawId(serverDrawId);
         }
         if (typeof data.timeRemaining === 'number' && phaseRef.current === 'betting') {
-          setTimeRemaining((prev) => {
-            // Smooth clock correction if client drifted by 2s or more
-            if (Math.abs(prev - data.timeRemaining) >= 2 || prev <= 0) {
-              return data.timeRemaining;
-            }
-            return prev;
-          });
+          setTimeRemaining(data.timeRemaining);
         }
       }
     } catch {
@@ -483,18 +477,26 @@ export default function App() {
     }, 1000);
   }, [currentDrawId, getRealUserId, handleWin]);
 
-  // Synchronized Round Countdown Loop (ticks down while in betting phase)
+  // Synchronized Master-Clock Countdown: calculates exact remaining seconds to eliminate drift
   useEffect(() => {
     if (phase !== 'betting') return;
 
-    const timer = setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    const roundDuration = 60 * 1000;
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const currentGlobalDrawId = String(Math.floor(now / roundDuration));
+
+      if (currentDrawIdRef.current !== currentGlobalDrawId) {
+        setCurrentDrawId(currentGlobalDrawId);
+      }
+
+      const exactRemaining = 60 - Math.floor((now % roundDuration) / 1000);
+      setTimeRemaining(exactRemaining);
+    };
+
+    updateTimer();
+    const timer = setInterval(updateTimer, 500);
 
     return () => clearInterval(timer);
   }, [phase]);
