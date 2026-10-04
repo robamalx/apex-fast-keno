@@ -34,9 +34,9 @@ export default function App() {
   const [phoneNumber, setPhoneNumber] = useState<string>('0963068117');
 
   // Core Game State: Synchronized Round Loop
-  // Phase 1: BETTING (45s) -> Phase 2: DRAWING (20 balls @ 1.2s = 24s) -> Phase 3: RESET (2s + 3.5s)
-  // Default real account starting balance: 0.00 ETB (New users receive +20.00 ETB Welcome Bonus automatically)
+  // Real cash balance and promotional bonus balance tracked separately
   const [balance, setBalance] = useState<number>(0);
+  const [bonus, setBonus] = useState<number>(0);
   const [currentDrawId, setCurrentDrawId] = useState<string>('890253779');
   const [phase, setPhase] = useState<'betting' | 'drawing' | 'reset'>('betting');
   const [timeRemaining, setTimeRemaining] = useState<number>(45); // 45s betting countdown
@@ -187,11 +187,11 @@ export default function App() {
 
       if (data && data.registered) {
         setIsRegistered(true);
-        // Real database balance (balance + bonus_balance)
+        // Set real cash balance and bonus balance separately
         const realBal = parseFloat(String(data.user?.balance ?? 0)) || 0;
         const bonusBal = parseFloat(String(data.user?.bonus_balance ?? 0)) || 0;
-        const totalPlayableBalance = parseFloat((realBal + bonusBal).toFixed(2));
-        setBalance(totalPlayableBalance);
+        setBalance(realBal);
+        setBonus(bonusBal);
 
         if (data.user?.first_name) {
           setPlayerName(data.user.first_name);
@@ -286,6 +286,12 @@ export default function App() {
     const interval = setInterval(fetchCommunityBets, 3500);
     return () => clearInterval(interval);
   }, [fetchGameState, fetchCommunityBets, currentDrawId, drawnBalls.length]);
+
+  // Winning function: All winnings go straight to the real cash balance
+  const handleWin = useCallback((winAmount: number) => {
+    // All winnings go straight to the real cash balance
+    setBalance((prev) => prev + winAmount);
+  }, []);
 
   // Sequential 20-Ball Reveal (Step-by-Step, 1 Ball every 1.0 Second)
   const triggerDrawSequence = useCallback(async () => {
@@ -404,12 +410,9 @@ export default function App() {
         };
         setRecentDraws((prev) => [newDrawEntry, ...prev.slice(0, 19)]);
 
-        // 5. Update player's balance if they won
+        // 5. Update player's balance if they won: All winnings go straight to the real cash balance
         if (totalWinnings > 0) {
-          setBalance((prev) => {
-            const finalBal = serverNewBalance !== null ? serverNewBalance : prev + totalWinnings;
-            return parseFloat(finalBal.toFixed(2));
-          });
+          handleWin(totalWinnings);
           haptic.notification('success');
           showToast(`🎉 Round Won! +${totalWinnings.toFixed(2)} ETB Credited`, 'success');
         } else if (currentActiveTickets.length > 0) {
@@ -430,7 +433,7 @@ export default function App() {
         }, 4000);
       }
     }, 1000);
-  }, [currentDrawId, getRealUserId]);
+  }, [currentDrawId, getRealUserId, handleWin]);
 
   // Synchronized Round Countdown Loop (ticks down while in betting phase)
   useEffect(() => {
@@ -507,47 +510,63 @@ export default function App() {
       return;
     }
 
-    if (balance < stake) {
-      haptic.notification('error');
-      showToast('Insufficient balance! Tap Deposit to add real ETB funds.', 'error');
-      setIsCashierOpen(true);
+    const betAmount = stake;
+    const totalFunds = balance + bonus;
+
+    if (betAmount > totalFunds) {
+      alert('Insufficient balance');
       return;
+    }
+
+    // Deduct from bonus first, then real balance
+    if (betAmount <= bonus) {
+      setBonus((prev) => prev - betAmount);
+    } else {
+      const remainingBet = betAmount - bonus;
+      setBonus(0);
+      setBalance((prev) => prev - remainingBet);
     }
 
     haptic.impact('heavy');
 
+    const ticketId = 't_' + Math.random().toString(36).substring(2, 9);
+    const timeStr = new Date().toTimeString().split(' ')[0];
+    const newLocalTicket: Ticket = {
+      id: ticketId,
+      drawId: currentDrawId,
+      userId: getRealUserId(),
+      userName: playerName,
+      userMasked: `${playerName.slice(0, 3)}***`,
+      chosenNumbers: [...selectedNumbers].sort((a, b) => a - b),
+      stake: betAmount,
+      timestamp: timeStr,
+      status: 'waiting',
+    };
+
+    setMyTickets((prev) => [newLocalTicket, ...prev]);
+    setSelectedNumbers([]);
+    haptic.notification('success');
+    showToast(`Ticket Placed (${betAmount.toFixed(2)} ETB)`, 'info');
+
     try {
       const userId = getRealUserId();
-      const numbersToSubmit = [...selectedNumbers];
-
       const res = await fetch('/api/bet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId,
-          chosenNumbers: numbersToSubmit,
-          stake,
+          chosenNumbers: newLocalTicket.chosenNumbers,
+          stake: betAmount,
         }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        showToast(data.error || 'Failed to place ticket.', 'error');
-        haptic.notification('error');
-        return;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.realBalance !== undefined) setBalance(data.realBalance);
+        if (data.bonusBalance !== undefined) setBonus(data.bonusBalance);
       }
-
-      setBalance(data.newBalance);
-      setMyTickets((prev) => [data.ticket, ...prev]);
-
-      // Immediately clear the selected numbers for the next ticket
-      setSelectedNumbers([]);
-
-      haptic.notification('success');
-      showToast(`Ticket #${data.ticketsPlacedCount} Placed (${stake.toFixed(2)} ETB)`, 'info');
     } catch {
-      showToast('Network error placing ticket.', 'error');
+      // offline / backend sync fallback
     }
   };
 
@@ -664,14 +683,19 @@ export default function App() {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-slate-400">Balance:</span>
-          <span className="font-black text-[#facc15] font-mono tabular-nums">{balance.toFixed(2)} ETB</span>
+          <span className="font-black text-[#facc15] font-mono tabular-nums">{(balance + bonus).toFixed(2)} ETB</span>
+          {bonus > 0 && (
+            <span className="text-[10px] text-emerald-400 font-bold hidden sm:inline">
+              ({balance.toFixed(2)} + {bonus.toFixed(2)} Bonus)
+            </span>
+          )}
         </div>
       </div>
 
       {/* Main Top Header Navigation Row + Sub-Header */}
       <div className="shrink-0 z-30 sticky top-0 bg-[#060907]">
         <HeaderNav
-          balance={balance}
+          balance={balance + bonus}
           drawId={currentDrawId}
           onOpenCashier={() => setIsCashierOpen(true)}
           onOpenMenu={() => setIsMenuOpen(true)}
@@ -707,7 +731,7 @@ export default function App() {
             showToast={showToast}
             currentDrawId={currentDrawId}
             timeRemaining={timeRemaining}
-            balance={balance}
+            balance={balance + bonus}
             searchQuery={searchQuery}
           />
         ) : (
@@ -731,7 +755,7 @@ export default function App() {
                 timeRemaining={timeRemaining}
                 ticketsPlacedCount={myTickets.length}
                 onOpenRules={() => setIsRulesOpen(true)}
-                balance={balance}
+                balance={balance + bonus}
                 hotNumbers={hotNumbers}
                 coldNumbers={coldNumbers}
                 drawnBalls={drawnBalls}
