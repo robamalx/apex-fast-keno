@@ -704,9 +704,9 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       let totalDeposited = 0;
       try {
         const depRes = await sql`
-          SELECT COALESCE(SUM(amount), 0) AS total_deposits
+          SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0) AS total_deposits
           FROM transactions
-          WHERE (user_id = ${String(userId)} OR telegram_id = ${String(userId)})
+          WHERE telegram_id = ${String(userId)}
             AND UPPER(transaction_type) = 'DEPOSIT'
             AND UPPER(status) = 'APPROVED'
         `;
@@ -728,12 +728,12 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       const newBal = Math.max(0, parseFloat((realBalance - withdrawAmount).toFixed(2)));
       await sql`UPDATE users SET balance = ${newBal} WHERE telegram_id = ${String(userId)}`;
 
-      // Insert transaction
+      // Insert transaction using telegram_id only
       const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
       try {
         await sql`
-          INSERT INTO transactions (id, user_id, telegram_id, transaction_type, amount, phone_number, account_name, status, created_at)
-          VALUES (${txId}, ${String(userId)}, ${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${String(targetPhone)}, ${String(targetName)}, 'PENDING', NOW())
+          INSERT INTO transactions (id, telegram_id, transaction_type, amount, phone_number, account_name, status, created_at)
+          VALUES (${txId}, ${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${String(targetPhone)}, ${String(targetName)}, 'PENDING', NOW())
         `;
       } catch (txErr) {
         console.warn('Transaction record error:', txErr);

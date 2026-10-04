@@ -61,14 +61,13 @@ export default async function handler(req, res) {
       });
     }
 
-    // Server Validation 3: Query transactions table to sum all approved deposits for this user
-    // (transaction_type = 'DEPOSIT' AND status = 'APPROVED')
+    // Server Validation 3: Query transactions table for approved lifetime deposits using telegram_id only
     let totalDeposited = 0;
     try {
       const depositRes = await sql`
-        SELECT COALESCE(SUM(amount), 0) AS total_deposits
+        SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0) AS total_deposits
         FROM transactions
-        WHERE (user_id = ${String(userId)} OR telegram_id = ${String(userId)})
+        WHERE telegram_id = ${String(userId)}
           AND UPPER(transaction_type) = 'DEPOSIT'
           AND UPPER(status) = 'APPROVED'
       `;
@@ -77,7 +76,6 @@ export default async function handler(req, res) {
         totalDeposited = parseFloat(depositRes[0].total_deposits) || 0;
       }
     } catch (txQueryErr) {
-      // If table has alternate column names or doesn't exist yet, query fallback
       console.warn('Transaction table query notice:', txQueryErr);
     }
 
@@ -97,13 +95,12 @@ export default async function handler(req, res) {
       WHERE telegram_id = ${String(userId)}
     `;
 
-    // 3. Insert record into transactions table with status = 'PENDING' and transaction_type = 'WITHDRAWAL'
+    // 3. Insert record into transactions table using telegram_id only
     const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
     try {
       await sql`
         INSERT INTO transactions (
           id, 
-          user_id, 
           telegram_id, 
           transaction_type, 
           amount, 
@@ -114,7 +111,6 @@ export default async function handler(req, res) {
         )
         VALUES (
           ${txId},
-          ${String(userId)},
           ${String(userId)},
           'WITHDRAWAL',
           ${amount},
@@ -129,7 +125,7 @@ export default async function handler(req, res) {
       try {
         await sql`
           INSERT INTO transactions (
-            user_id, 
+            telegram_id, 
             transaction_type, 
             amount, 
             status, 
