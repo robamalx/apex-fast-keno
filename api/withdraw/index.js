@@ -124,12 +124,11 @@ export default async function handler(req, res) {
       WHERE telegram_id = ${String(userId)}
     `;
 
-    // 4. Generate unique transaction ID and record in transactions table
-    const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
+    // 4. Insert record into transactions table letting PostgreSQL auto-generate numeric ID
+    let dbTxId;
     try {
-      await sql`
+      const insertRes = await sql`
         INSERT INTO transactions (
-          id, 
           telegram_id, 
           transaction_type, 
           amount, 
@@ -139,7 +138,6 @@ export default async function handler(req, res) {
           created_at
         )
         VALUES (
-          ${txId},
           ${String(userId)},
           'WITHDRAWAL',
           ${amount},
@@ -148,10 +146,14 @@ export default async function handler(req, res) {
           'PENDING',
           NOW()
         )
+        RETURNING id
       `;
+      if (insertRes && insertRes.length > 0) {
+        dbTxId = insertRes[0].id;
+      }
     } catch (insertErr) {
       try {
-        await sql`
+        const fallbackRes = await sql`
           INSERT INTO transactions (
             telegram_id, 
             transaction_type, 
@@ -166,13 +168,17 @@ export default async function handler(req, res) {
             'PENDING',
             NOW()
           )
+          RETURNING id
         `;
+        if (fallbackRes && fallbackRes.length > 0) {
+          dbTxId = fallbackRes[0].id;
+        }
       } catch (compactErr) {
         console.warn('Could not insert into transactions table:', compactErr);
       }
     }
 
-    // 5. Send Telegram notification to Admin Group with Interactive Inline Buttons
+    // 5. Send Telegram notification to Admin Group with Interactive Inline Buttons using auto-generated dbTxId
     const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
     const ADMIN_CHAT_ID = '-1004315987317';
 
@@ -180,7 +186,7 @@ export default async function handler(req, res) {
 
     const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n` +
       `<b>Type:</b> <i>${withdrawalBadge}</i>\n\n` +
-      `<b>Transaction ID:</b> <code>${txId}</code>\n` +
+      `<b>Transaction ID:</b> <code>${dbTxId || 'Pending'}</code>\n` +
       `<b>Player ID:</b> <code>${userId}</code>\n` +
       `<b>Name:</b> ${accountName}\n` +
       `<b>Phone:</b> <code>${phoneNumber}</code>\n` +
@@ -199,8 +205,8 @@ export default async function handler(req, res) {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '✅ Approve', callback_data: `wd_approve_${txId}` },
-                { text: '❌ Reject', callback_data: `wd_reject_${txId}` },
+                { text: '✅ Approve', callback_data: `wd_approve_${dbTxId}` },
+                { text: '❌ Reject', callback_data: `wd_reject_${dbTxId}` },
               ],
             ],
           },
@@ -210,12 +216,13 @@ export default async function handler(req, res) {
       console.error('Failed to send Telegram admin notification:', tgErr);
     }
 
-    // 6. Return updated balance to frontend
+    // 6. Return updated balance and database generated ID to frontend
     return res.status(200).json({
       success: true,
       newBalance,
       amount,
-      txId,
+      id: dbTxId,
+      txId: dbTxId,
       message: `Withdrawal request for ${amount.toFixed(2)} ETB submitted successfully.`,
     });
   } catch (error) {

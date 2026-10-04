@@ -754,13 +754,17 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       const newBal = Math.max(0, parseFloat((realBalance - withdrawAmount).toFixed(2)));
       await sql`UPDATE users SET balance = ${newBal} WHERE telegram_id = ${String(userId)}`;
 
-      // Insert transaction using telegram_id only
-      const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
+      // Insert transaction using telegram_id only and let PostgreSQL auto-generate ID
+      let dbTxId;
       try {
-        await sql`
-          INSERT INTO transactions (id, telegram_id, transaction_type, amount, phone_number, account_name, status, created_at)
-          VALUES (${txId}, ${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${String(targetPhone)}, ${String(targetName)}, 'PENDING', NOW())
+        const insertRes = await sql`
+          INSERT INTO transactions (telegram_id, transaction_type, amount, phone_number, account_name, status, created_at)
+          VALUES (${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${String(targetPhone)}, ${String(targetName)}, 'PENDING', NOW())
+          RETURNING id
         `;
+        if (insertRes && insertRes.length > 0) {
+          dbTxId = insertRes[0].id;
+        }
       } catch (txErr) {
         console.warn('Transaction record error:', txErr);
       }
@@ -769,7 +773,7 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
       const ADMIN_CHAT_ID = '-1004315987317';
       const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n\n` +
-        `<b>Transaction ID:</b> <code>${txId}</code>\n` +
+        `<b>Transaction ID:</b> <code>${dbTxId || 'Pending'}</code>\n` +
         `<b>Player ID:</b> <code>${userId}</code>\n` +
         `<b>Name:</b> ${targetName}\n` +
         `<b>Phone:</b> <code>${targetPhone}</code>\n` +
@@ -787,8 +791,8 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: '✅ Approve', callback_data: `wd_approve_${txId}` },
-                  { text: '❌ Reject', callback_data: `wd_reject_${txId}` },
+                  { text: '✅ Approve', callback_data: `wd_approve_${dbTxId}` },
+                  { text: '❌ Reject', callback_data: `wd_reject_${dbTxId}` },
                 ],
               ],
             },
@@ -801,6 +805,9 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       return res.json({
         success: true,
         newBalance: newBal,
+        amount: withdrawAmount,
+        id: dbTxId,
+        txId: dbTxId,
         message: `Withdrawal request for ${withdrawAmount.toFixed(2)} ETB submitted!`,
       });
     } catch (neonErr) {
