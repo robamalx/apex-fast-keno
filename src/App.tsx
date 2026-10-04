@@ -85,6 +85,7 @@ export default function App() {
   currentDrawIdRef.current = currentDrawId;
   const drawnBallsRef = useRef(drawnBalls);
   drawnBallsRef.current = drawnBalls;
+  const drawnRoundIdRef = useRef<string>('');
 
   // Real persistent Telegram/Browser User ID
   const getRealUserId = useCallback((): string => {
@@ -286,21 +287,13 @@ export default function App() {
       const res = await fetch(`/api/community-bets?${q.toString()}`);
       if (res.ok) {
         const data = await res.json();
+        // Virtual community count and bets sync
         if (data.bets) {
           setCommunityBets(data.bets);
           if (data.totalCount) setTotalCommunityCount(data.totalCount);
         } else if (Array.isArray(data)) {
           setCommunityBets(data);
           setTotalCommunityCount(data.length);
-        }
-
-        // Master-clock timer synchronization
-        const serverDrawId = data.currentDrawId || data.drawId;
-        if (serverDrawId && phaseRef.current === 'betting') {
-          setCurrentDrawId(serverDrawId);
-        }
-        if (typeof data.timeRemaining === 'number' && phaseRef.current === 'betting') {
-          setTimeRemaining(data.timeRemaining);
         }
       }
     } catch {
@@ -334,20 +327,17 @@ export default function App() {
     setBalance((prev) => prev + winAmount);
   }, []);
 
-  // Sequential 20-Ball Reveal (Step-by-Step, 1 Ball every 1.0 Second)
-  const triggerDrawSequence = useCallback(async () => {
-    // 1. Stop countdown and lock game in DRAWING state
+  // Sequential 20-Ball Reveal (Step-by-Step, 20 Balls across ~10s in the 15s DRAWING window)
+  const triggerDrawSequence = useCallback(async (targetDrawId: string) => {
+    // 1. Lock game in DRAWING state and clear previous draw balls
     setPhase('drawing');
     phaseRef.current = 'drawing';
-    setTimeRemaining(0);
     setDrawnBalls([]);
     setLastDrawnBall(undefined);
     setIsDrawFinished(false);
     setLastRoundWinnings(0);
 
     let fullDrawList: number[] = [];
-    let nextDrawIdStr = '';
-    let serverNewBalance: number | null = null;
 
     try {
       const userId = getRealUserId();
@@ -356,7 +346,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId,
-          drawId: currentDrawId,
+          drawId: targetDrawId,
           tickets: myTicketsRef.current,
         }),
       });
@@ -365,12 +355,8 @@ export default function App() {
         const data = await res.json();
         if (Array.isArray(data.drawnNumbers) && data.drawnNumbers.length === 20) {
           fullDrawList = data.drawnNumbers;
-          nextDrawIdStr = data.nextDrawId;
           if (data.recentDraws && Array.isArray(data.recentDraws)) {
             setRecentDraws(data.recentDraws);
-          }
-          if (data.newBalance !== null && data.newBalance !== undefined) {
-            serverNewBalance = data.newBalance;
           }
         }
       }
@@ -392,7 +378,7 @@ export default function App() {
       myTicketsRef.current.flatMap((t) => t.chosenNumbers)
     );
 
-    // 3. Visually reveal each ball step-by-step
+    // 3. Visually reveal each ball step-by-step (500ms each = 10s for 20 balls)
     const drawInterval = setInterval(() => {
       if (currentIndex < fullDrawList.length) {
         const ball = fullDrawList[currentIndex];
@@ -412,8 +398,6 @@ export default function App() {
 
         // 4. All 20 balls revealed: check player's tickets against drawn numbers
         setIsDrawFinished(true);
-        const resolvedNextId = nextDrawIdStr || String(Number(currentDrawId) + 1);
-        setCurrentDrawId(resolvedNextId);
 
         const currentActiveTickets = myTicketsRef.current;
         let totalWinnings = 0;
@@ -444,7 +428,7 @@ export default function App() {
 
         // Update recent draws list
         const newDrawEntry: DrawResult = {
-          drawId: currentDrawId,
+          drawId: targetDrawId,
           timestamp: new Date().toTimeString().split(' ')[0],
           drawnNumbers: fullDrawList,
           totalBets: Math.floor(650 + Math.random() * 250),
@@ -452,7 +436,7 @@ export default function App() {
         };
         setRecentDraws((prev) => [newDrawEntry, ...prev.slice(0, 19)]);
 
-        // 5. Update player's balance if they won: All winnings go straight to the real cash balance
+        // 5. Update player's balance if they won
         if (totalWinnings > 0) {
           handleWin(totalWinnings);
           haptic.notification('success');
@@ -460,53 +444,68 @@ export default function App() {
         } else if (currentActiveTickets.length > 0) {
           haptic.notification('error');
         }
+      }
+    }, 500);
+  }, [getRealUserId, handleWin]);
 
-        // 6. Wait a few seconds (4s) for player to see results, then clear board and restart countdown
-        setTimeout(() => {
+  // Master UTC absolute synchronized game loop:
+  // TOTAL_CYCLE = 60s
+  // BETTING_DURATION = 45s (counts down 45 -> 0)
+  // DRAWING_DURATION = 15s (counts down 15 -> 0)
+  useEffect(() => {
+    const updateTimer = () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const roundId = String(Math.floor(nowSec / 60));
+      const elapsedInCycle = nowSec % 60;
+
+      let currentPhase: 'betting' | 'drawing' = 'betting';
+      let timeLeft = 0;
+
+      if (elapsedInCycle < 45) {
+        currentPhase = 'betting';
+        timeLeft = 45 - elapsedInCycle;
+      } else {
+        currentPhase = 'drawing';
+        timeLeft = 60 - elapsedInCycle;
+      }
+
+      setTimeRemaining(timeLeft);
+
+      if (currentDrawIdRef.current !== roundId) {
+        setCurrentDrawId(roundId);
+      }
+
+      // Transition into DRAWING: Lock betting, trigger 20-ball draw & evaluate active bets
+      if (currentPhase === 'drawing') {
+        if (phaseRef.current !== 'drawing') {
+          setPhase('drawing');
+          phaseRef.current = 'drawing';
+        }
+        if (drawnRoundIdRef.current !== roundId) {
+          drawnRoundIdRef.current = roundId;
+          triggerDrawSequence(roundId);
+        }
+      }
+      // Transition / Rollover to new roundId in BETTING: clear drawn balls and reset ticket
+      else if (currentPhase === 'betting') {
+        if (phaseRef.current !== 'betting') {
+          setPhase('betting');
+          phaseRef.current = 'betting';
           setIsDrawFinished(false);
           setDrawnBalls([]);
           setLastDrawnBall(undefined);
           setLastRoundWinnings(0);
           setSelectedNumbers([]);
           setMyTickets([]);
-          setPhase('betting');
-          phaseRef.current = 'betting';
-          setTimeRemaining(45);
-        }, 4000);
+        }
       }
-    }, 1000);
-  }, [currentDrawId, getRealUserId, handleWin]);
-
-  // Synchronized Master-Clock Countdown: calculates exact remaining seconds to eliminate drift
-  useEffect(() => {
-    if (phase !== 'betting') return;
-
-    const roundDuration = 60 * 1000;
-
-    const updateTimer = () => {
-      const now = Date.now();
-      const currentGlobalDrawId = String(Math.floor(now / roundDuration));
-
-      if (currentDrawIdRef.current !== currentGlobalDrawId) {
-        setCurrentDrawId(currentGlobalDrawId);
-      }
-
-      const exactRemaining = 60 - Math.floor((now % roundDuration) / 1000);
-      setTimeRemaining(exactRemaining);
     };
 
     updateTimer();
-    const timer = setInterval(updateTimer, 500);
+    const timer = setInterval(updateTimer, 250);
 
     return () => clearInterval(timer);
-  }, [phase]);
-
-  // When timer hits 0 during betting, trigger the draw sequence immediately
-  useEffect(() => {
-    if (phase === 'betting' && timeRemaining === 0) {
-      triggerDrawSequence();
-    }
-  }, [timeRemaining, phase, triggerDrawSequence]);
+  }, [triggerDrawSequence]);
 
   // Toggle Number Selection on Keno Board
   const handleToggleNumber = (num: number) => {
