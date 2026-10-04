@@ -672,9 +672,9 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
     return res.status(400).json({ error: 'Phone number and account name are required.' });
   }
 
-  // Server Validation 1: Min 1000 ETB
-  if (isNaN(withdrawAmount) || withdrawAmount < 1000) {
-    return res.status(400).json({ error: 'Minimum withdrawal is 1000 ETB.' });
+  // Basic sanity check
+  if (isNaN(withdrawAmount) || withdrawAmount < 200) {
+    return res.status(400).json({ error: 'Minimum withdrawal is 200 ETB.' });
   }
 
   if (process.env.DATABASE_URL && userId && userId !== 'default_user') {
@@ -682,7 +682,7 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       const { neon } = await import('@neondatabase/serverless');
       const sql = neon(process.env.DATABASE_URL);
 
-      // Server Validation 2: Fetch real balance
+      // Server Validation 1: Fetch real balance
       const userRes = await sql`
         SELECT balance, bonus_balance 
         FROM users 
@@ -700,8 +700,8 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
         });
       }
 
-      // Server Validation 3: Query transactions table and compute deposits in JavaScript
-      const depositRes = await sql`
+      // Query transactions history
+      const txHistory = await sql`
         SELECT transaction_type, status, amount
         FROM transactions
         WHERE telegram_id = ${String(userId)}
@@ -709,21 +709,45 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
 
       let approvedDeposits = 0;
       let pendingDeposits = 0;
+      let approvedWithdrawals = 0;
 
-      depositRes.forEach((row: any) => {
-        if (String(row.transaction_type).toUpperCase() === 'DEPOSIT') {
-          if (String(row.status).toUpperCase() === 'APPROVED') {
-            approvedDeposits += parseFloat(row.amount) || 0;
+      txHistory.forEach((row: any) => {
+        const type = String(row.transaction_type).toUpperCase();
+        const status = String(row.status).toUpperCase();
+        const val = parseFloat(row.amount) || 0;
+
+        if (type === 'DEPOSIT') {
+          if (status === 'APPROVED') {
+            approvedDeposits += val;
           } else {
-            pendingDeposits += parseFloat(row.amount) || 0;
+            pendingDeposits += val;
+          }
+        } else if (type === 'WITHDRAWAL') {
+          if (status === 'APPROVED') {
+            approvedWithdrawals += 1;
           }
         }
       });
 
+      // Rule 1: At least 200 ETB approved deposits
       if (approvedDeposits < 200) {
         return res.status(400).json({
           error: `Deposit Rule Failed. Approved: ${approvedDeposits} ETB | Pending: ${pendingDeposits} ETB. You must have 200 ETB in APPROVED deposits.`,
         });
+      }
+
+      // Rule 2: Dynamic minimum withdrawal (1000 ETB for first-time, 200 ETB for subsequent)
+      const minWithdrawal = approvedWithdrawals === 0 ? 1000 : 200;
+      if (withdrawAmount < minWithdrawal) {
+        if (approvedWithdrawals === 0) {
+          return res.status(400).json({
+            error: 'Your first withdrawal must be at least 1000 ETB. Subsequent withdrawals require only 200 ETB.',
+          });
+        } else {
+          return res.status(400).json({
+            error: 'Minimum withdrawal is 200 ETB.',
+          });
+        }
       }
 
       // Deduct amount

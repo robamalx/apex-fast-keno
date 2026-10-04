@@ -25,9 +25,9 @@ export default async function handler(req, res) {
 
   const amount = parseFloat(rawAmount);
 
-  // Server Validation 1: Minimum withdrawal is 1000 ETB
-  if (isNaN(amount) || amount < 1000) {
-    return res.status(400).json({ error: 'Minimum withdrawal is 1000 ETB.' });
+  // Basic sanity check on amount
+  if (isNaN(amount) || amount < 200) {
+    return res.status(400).json({ error: 'Minimum withdrawal is 200 ETB.' });
   }
 
   if (!phoneNumber || !accountName) {
@@ -54,15 +54,15 @@ export default async function handler(req, res) {
 
     const realBalance = parseFloat(userRes[0].balance) || 0;
 
-    // Server Validation 2: Reject if user's real balance < requested amount (ignoring bonus)
+    // Server Validation 1: Real balance check
     if (realBalance < amount) {
       return res.status(400).json({
         error: `Insufficient real balance. Your withdrawable cash balance is ${realBalance.toFixed(2)} ETB (bonus balance cannot be withdrawn).`,
       });
     }
 
-    // Server Validation 3: Query transactions table and compute deposits in JavaScript
-    const depositRes = await sql`
+    // 2. Query transactions table to calculate deposits and approved withdrawals history
+    const txHistory = await sql`
       SELECT transaction_type, status, amount
       FROM transactions
       WHERE telegram_id = ${String(userId)}
@@ -70,24 +70,53 @@ export default async function handler(req, res) {
 
     let approvedDeposits = 0;
     let pendingDeposits = 0;
+    let approvedWithdrawals = 0;
 
-    depositRes.forEach((row) => {
-      if (String(row.transaction_type).toUpperCase() === 'DEPOSIT') {
-        if (String(row.status).toUpperCase() === 'APPROVED') {
-          approvedDeposits += parseFloat(row.amount) || 0;
+    txHistory.forEach((row) => {
+      const type = String(row.transaction_type).toUpperCase();
+      const status = String(row.status).toUpperCase();
+      const val = parseFloat(row.amount) || 0;
+
+      if (type === 'DEPOSIT') {
+        if (status === 'APPROVED') {
+          approvedDeposits += val;
         } else {
-          pendingDeposits += parseFloat(row.amount) || 0;
+          pendingDeposits += val;
+        }
+      } else if (type === 'WITHDRAWAL') {
+        if (status === 'APPROVED') {
+          approvedWithdrawals += 1;
         }
       }
     });
 
+    // Rule 1: Lifetime approved deposits must be at least 200 ETB
     if (approvedDeposits < 200) {
       return res.status(400).json({
         error: `Deposit Rule Failed. Approved: ${approvedDeposits} ETB | Pending: ${pendingDeposits} ETB. You must have 200 ETB in APPROVED deposits.`,
       });
     }
 
-    // 2. Deduct amount from user's real balance
+    // Rule 2: Dynamic minimum withdrawal (1000 ETB for first-time, 200 ETB for subsequent)
+    const minWithdrawal = approvedWithdrawals === 0 ? 1000 : 200;
+
+    if (amount < minWithdrawal) {
+      if (approvedWithdrawals === 0) {
+        return res.status(400).json({
+          error: 'Your first withdrawal must be at least 1000 ETB. Subsequent withdrawals require only 200 ETB.',
+          minWithdrawal: 1000,
+          approvedWithdrawals: 0,
+        });
+      } else {
+        return res.status(400).json({
+          error: 'Minimum withdrawal is 200 ETB.',
+          minWithdrawal: 200,
+          approvedWithdrawals,
+        });
+      }
+    }
+
+    // 3. Deduct amount from user's real balance
     const newBalance = Math.max(0, parseFloat((realBalance - amount).toFixed(2)));
     await sql`
       UPDATE users 
@@ -95,7 +124,7 @@ export default async function handler(req, res) {
       WHERE telegram_id = ${String(userId)}
     `;
 
-    // 3. Generate unique transaction ID and record in transactions table
+    // 4. Generate unique transaction ID and record in transactions table
     const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
     try {
       await sql`
@@ -121,7 +150,6 @@ export default async function handler(req, res) {
         )
       `;
     } catch (insertErr) {
-      // Fallback for compact schema
       try {
         await sql`
           INSERT INTO transactions (
@@ -144,11 +172,14 @@ export default async function handler(req, res) {
       }
     }
 
-    // 4. Send Telegram notification to Admin Group with Interactive Action Buttons
+    // 5. Send Telegram notification to Admin Group with Interactive Inline Buttons
     const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
     const ADMIN_CHAT_ID = '-1004315987317';
 
-    const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n\n` +
+    const withdrawalBadge = approvedWithdrawals === 0 ? '🆕 FIRST-TIME WITHDRAWAL' : `🔁 WITHDRAWAL #${approvedWithdrawals + 1}`;
+
+    const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n` +
+      `<b>Type:</b> <i>${withdrawalBadge}</i>\n\n` +
       `<b>Transaction ID:</b> <code>${txId}</code>\n` +
       `<b>Player ID:</b> <code>${userId}</code>\n` +
       `<b>Name:</b> ${accountName}\n` +
@@ -179,7 +210,7 @@ export default async function handler(req, res) {
       console.error('Failed to send Telegram admin notification:', tgErr);
     }
 
-    // 5. Return updated balance to frontend
+    // 6. Return updated balance to frontend
     return res.status(200).json({
       success: true,
       newBalance,

@@ -40,7 +40,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   // Withdraw Form State
   const [withdrawPhone, setWithdrawPhone] = useState(phoneNumber);
   const [withdrawName, setWithdrawName] = useState('');
-  const [withdrawAmount, setWithdrawAmount] = useState('1000');
+  const [withdrawAmount, setWithdrawAmount] = useState('200');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [withdrawError, setWithdrawError] = useState('');
 
@@ -71,10 +71,10 @@ export const CashierModal: React.FC<CashierModalProps> = ({
     e.preventDefault();
     const amountNum = Number(withdrawAmount);
 
-    // Client-side Validation: Minimum withdrawal is 1000 ETB
-    if (isNaN(amountNum) || amountNum < 1000) {
-      setWithdrawError('Minimum withdrawal is 1000 ETB.');
-      showToast('Minimum withdrawal is 1000 ETB.', 'error');
+    // Client-side Validation: Minimum base threshold is 200 ETB (backend dynamically checks 1000 ETB for first-time)
+    if (isNaN(amountNum) || amountNum < 200) {
+      setWithdrawError('Minimum withdrawal is 200 ETB.');
+      showToast('Minimum withdrawal is 200 ETB.', 'error');
       haptic.notification('warning');
       return;
     }
@@ -257,7 +257,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
                   type="number"
                   value={withdrawAmount}
                   onChange={(e) => setWithdrawAmount(e.target.value)}
-                  placeholder="Min 1000 ETB"
+                  placeholder="Min 200 ETB (1000 ETB for first-time)"
                   className="w-full bg-[#050807] border border-[#1f3127] rounded-xl p-3 text-white font-mono-num font-bold text-sm focus:outline-none focus:border-[#00e699]"
                 />
               </div>
