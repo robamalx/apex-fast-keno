@@ -176,6 +176,11 @@ app.get('/api/state', async (req, res) => {
   const name = (req.query.name as string) || '';
   const username = (req.query.username as string) || '';
 
+  // 1. Calculate global synchronized round ID and remaining seconds (60s cycle based on UTC)
+  const roundDuration = 60 * 1000;
+  const currentDrawId = String(Math.floor(Date.now() / roundDuration));
+  const timeRemaining = 60 - Math.floor((Date.now() % roundDuration) / 1000);
+
   // Retrieve or create persistent user with real 0.00 ETB balance
   const user = db.getOrCreateUser(userId, name, username);
 
@@ -246,7 +251,9 @@ app.get('/api/state', async (req, res) => {
     balance: userBalance,
     bonus_balance: bonusBalance,
     welcomeBonusAwarded: Boolean(user.isNewUser),
-    currentDrawId: String(currentServerDrawId),
+    currentDrawId,
+    timeRemaining,
+    roundDuration: 60,
     myTickets: userTickets,
     myBetsHistory: userHistory,
     recentDraws: drawHistoryList,
@@ -261,9 +268,10 @@ app.get('/api/state', async (req, res) => {
 // VIRTUAL PLAYER SIMULATION (500 - 1,000 PARTICIPANTS PER ROUND)
 // ============================================================================
 app.get('/api/community-bets', (req, res) => {
-  const drawId = (req.query.drawId as string) || String(currentServerDrawId);
-  const timeRemaining = Number(req.query.timeRemaining ?? 30);
-  const phase = (req.query.phase as 'betting' | 'drawing' | 'reset') || 'betting';
+  const roundDuration = 60 * 1000;
+  const currentDrawId = String(Math.floor(Date.now() / roundDuration));
+  const timeRemaining = 60 - Math.floor((Date.now() % roundDuration) / 1000);
+  const phase = (req.query.phase as 'betting' | 'drawing' | 'reset') || (timeRemaining <= 15 ? 'drawing' : 'betting');
   const drawnBallsParam = req.query.drawnBalls as string;
 
   let drawnBalls: number[] = [];
@@ -275,8 +283,13 @@ app.get('/api/community-bets', (req, res) => {
     }
   }
 
-  const roundData = virtualSimulation.getRoundState(drawId, timeRemaining, phase, drawnBalls);
-  res.json(roundData);
+  const roundData = virtualSimulation.getRoundState(currentDrawId, timeRemaining, phase, drawnBalls);
+  res.json({
+    ...roundData,
+    drawId: currentDrawId,
+    currentDrawId,
+    timeRemaining,
+  });
 });
 
 // ============================================================================
@@ -437,9 +450,11 @@ app.post('/api/draw/resolve', async (req, res) => {
   const { userId = 'default_user', tickets: clientTickets, drawId: reqDrawId } = req.body;
   const user = db.getOrCreateUser(userId);
 
-  const drawIdStr = reqDrawId ? String(reqDrawId) : String(currentServerDrawId);
-  const { drawnNumbers } = generateKenoDrawPRNG();
+  const roundDuration = 60 * 1000;
+  const computedDrawId = String(Math.floor(Date.now() / roundDuration));
+  const drawIdStr = reqDrawId ? String(reqDrawId) : computedDrawId;
 
+  let { drawnNumbers } = generateKenoDrawPRNG();
   let totalWinnings = 0;
   let winningTicketsCount = 0;
   let userTickets = activeRoundTickets[userId] || [];
@@ -448,11 +463,40 @@ app.post('/api/draw/resolve', async (req, res) => {
     userTickets = clientTickets;
   }
 
-  // 3. In /api/draw/resolve: Update tickets table for all tickets matching the draw_id
+  // 2. Query draws table to see if drawn_numbers already exist for this ID
   if (process.env.DATABASE_URL) {
     try {
       const { neon } = await import('@neondatabase/serverless');
       const sql = neon(process.env.DATABASE_URL);
+
+      const existingDraw = await sql`
+        SELECT id, drawn_numbers 
+        FROM draws 
+        WHERE id = ${drawIdStr}
+      `;
+
+      if (existingDraw.length > 0 && Array.isArray(existingDraw[0].drawn_numbers) && existingDraw[0].drawn_numbers.length === 20) {
+        drawnNumbers = existingDraw[0].drawn_numbers;
+      } else {
+        try {
+          await sql`
+            INSERT INTO draws (id, drawn_numbers, created_at)
+            VALUES (${drawIdStr}, ${drawnNumbers}, NOW())
+            ON CONFLICT (id) DO NOTHING
+          `;
+        } catch (insertErr) {
+          console.warn('Draw insert conflict:', insertErr);
+        }
+
+        const canonicalDraw = await sql`
+          SELECT id, drawn_numbers 
+          FROM draws 
+          WHERE id = ${drawIdStr}
+        `;
+        if (canonicalDraw.length > 0 && Array.isArray(canonicalDraw[0].drawn_numbers) && canonicalDraw[0].drawn_numbers.length === 20) {
+          drawnNumbers = canonicalDraw[0].drawn_numbers;
+        }
+      }
 
       // Fetch tickets for this draw
       let dbTickets = await sql`

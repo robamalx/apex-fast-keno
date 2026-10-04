@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 
-// KENO Paytable Matrix
+// Standard KENO Paytable Matrix
 const KENO_PAYTABLE = {
   1: { 1: 3.8 },
   2: { 1: 1.0, 2: 9.0 },
@@ -40,15 +40,15 @@ export default async function handler(req, res) {
   }
 
   const telegramId = body?.userId || body?.telegram_id || body?.telegramId || req.query?.userId || req.query?.telegram_id;
-  const drawId = body?.drawId || req.query?.drawId;
+  
+  // Calculate current 60s global draw ID if not passed
+  const roundDuration = 60 * 1000;
+  const computedDrawId = String(Math.floor(Date.now() / roundDuration));
+  const drawId = body?.drawId || req.query?.drawId || computedDrawId;
   const clientTickets = body?.tickets || [];
+  const nextDrawId = String(Number(drawId) + 1);
 
-  const drawnNumbers = Array.isArray(body?.drawnNumbers) && body.drawnNumbers.length === 20
-    ? body.drawnNumbers
-    : generate20Balls();
-
-  const nextDrawId = String(Date.now()).slice(-9);
-
+  let drawnNumbers = [];
   let totalWinnings = 0;
   let resolvedTickets = [];
   let newBalance = null;
@@ -57,16 +57,51 @@ export default async function handler(req, res) {
     try {
       const sql = neon(process.env.DATABASE_URL);
 
-      // 1. Fetch tickets matching the draw_id (or for the user)
-      let ticketsToResolve = [];
+      // 1. Check if drawn_numbers already exist in the draws table for this drawId
+      const existingDraw = await sql`
+        SELECT id, drawn_numbers 
+        FROM draws 
+        WHERE id = ${String(drawId)}
+      `;
 
-      if (drawId) {
-        ticketsToResolve = await sql`
-          SELECT id, user_id, draw_id, chosen_numbers, stake, payout, status
-          FROM tickets
-          WHERE draw_id = ${String(drawId)} AND status = 'waiting'
+      if (existingDraw.length > 0 && Array.isArray(existingDraw[0].drawn_numbers) && existingDraw[0].drawn_numbers.length === 20) {
+        // IF THEY EXIST: Return those exact numbers
+        drawnNumbers = existingDraw[0].drawn_numbers;
+      } else {
+        // IF THEY DO NOT EXIST: Generate 20 numbers and insert into draws table
+        const generated = generate20Balls();
+        try {
+          await sql`
+            INSERT INTO draws (id, drawn_numbers, created_at)
+            VALUES (${String(drawId)}, ${generated}, NOW())
+            ON CONFLICT (id) DO NOTHING
+          `;
+        } catch (insertErr) {
+          console.warn('Concurrent draw insert handled:', insertErr);
+        }
+
+        // Fetch back to ensure all concurrent requests get the exact same numbers
+        const canonicalDraw = await sql`
+          SELECT id, drawn_numbers 
+          FROM draws 
+          WHERE id = ${String(drawId)}
         `;
-      } else if (telegramId) {
+
+        if (canonicalDraw.length > 0 && Array.isArray(canonicalDraw[0].drawn_numbers) && canonicalDraw[0].drawn_numbers.length === 20) {
+          drawnNumbers = canonicalDraw[0].drawn_numbers;
+        } else {
+          drawnNumbers = generated;
+        }
+      }
+
+      // 2. Fetch all waiting tickets matching this draw_id
+      let ticketsToResolve = await sql`
+        SELECT id, user_id, draw_id, chosen_numbers, stake, payout, status
+        FROM tickets
+        WHERE draw_id = ${String(drawId)} AND status = 'waiting'
+      `;
+
+      if (ticketsToResolve.length === 0 && telegramId) {
         ticketsToResolve = await sql`
           SELECT id, user_id, draw_id, chosen_numbers, stake, payout, status
           FROM tickets
@@ -74,7 +109,7 @@ export default async function handler(req, res) {
         `;
       }
 
-      // 2. Update the tickets table for all matching tickets: status = 'resolved' and update payout
+      // 3. Resolve all user tickets against these unified numbers
       for (const t of ticketsToResolve) {
         const chosenNumbers = Array.isArray(t.chosen_numbers) ? t.chosen_numbers : [];
         const matchedNumbers = chosenNumbers.filter((n) => drawnNumbers.includes(n));
@@ -82,14 +117,14 @@ export default async function handler(req, res) {
         const multiplier = calculateMultiplier(chosenNumbers.length, matchedCount);
         const payout = Math.round((parseFloat(t.stake) || 0) * multiplier * 100) / 100;
 
-        // Update database row
+        // Update database row to status = 'resolved'
         await sql`
           UPDATE tickets
           SET status = 'resolved', payout = ${payout}
           WHERE id = ${t.id}
         `;
 
-        // Credit winnings to user balance
+        // Credit winnings to user cash balance
         if (payout > 0) {
           await sql`
             UPDATE users
@@ -115,7 +150,7 @@ export default async function handler(req, res) {
         });
       }
 
-      // Also handle any client tickets that might not have been caught by the query
+      // 4. Also resolve any active client tickets if passed in request body
       if (clientTickets.length > 0 && resolvedTickets.length === 0) {
         for (const t of clientTickets) {
           const chosenNumbers = t.chosenNumbers || [];
@@ -152,7 +187,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 3. Fetch latest user balance
+      // 5. Fetch latest updated balance
       if (telegramId) {
         const userRes = await sql`
           SELECT balance, bonus_balance 
@@ -170,7 +205,11 @@ export default async function handler(req, res) {
     }
   }
 
-  // Fallback for memory/offline mode
+  // Fallback if no database
+  if (drawnNumbers.length === 0) {
+    drawnNumbers = generate20Balls();
+  }
+
   if (resolvedTickets.length === 0 && clientTickets.length > 0) {
     resolvedTickets = clientTickets.map((t) => {
       const chosenNumbers = t.chosenNumbers || [];
@@ -192,6 +231,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     success: true,
+    drawId,
     drawnNumbers,
     totalWinnings,
     newBalance,
@@ -199,7 +239,7 @@ export default async function handler(req, res) {
     resolvedTickets,
     recentDraws: [
       {
-        drawId: nextDrawId,
+        drawId,
         timestamp: new Date().toTimeString().split(' ')[0],
         drawnNumbers,
         totalBets: 750 + Math.floor(Math.random() * 200),

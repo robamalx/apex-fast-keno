@@ -149,8 +149,12 @@ export default function App() {
         if (data.welcomeBonusAwarded) {
           showToast('🎁 Welcome Bonus Credited: +20.00 ETB ready to play!', 'success');
         }
+        // Master-clock timer and round sync
         if (data.currentDrawId) {
           setCurrentDrawId(data.currentDrawId);
+        }
+        if (typeof data.timeRemaining === 'number') {
+          setTimeRemaining(data.timeRemaining);
         }
         // Protect local tickets: only update if data.myTickets actually contains items
         if (Array.isArray(data.myTickets) && data.myTickets.length > 0) {
@@ -288,6 +292,21 @@ export default function App() {
         } else if (Array.isArray(data)) {
           setCommunityBets(data);
           setTotalCommunityCount(data.length);
+        }
+
+        // Master-clock timer synchronization
+        const serverDrawId = data.currentDrawId || data.drawId;
+        if (serverDrawId && phaseRef.current === 'betting') {
+          setCurrentDrawId(serverDrawId);
+        }
+        if (typeof data.timeRemaining === 'number' && phaseRef.current === 'betting') {
+          setTimeRemaining((prev) => {
+            // Smooth clock correction if client drifted by 2s or more
+            if (Math.abs(prev - data.timeRemaining) >= 2 || prev <= 0) {
+              return data.timeRemaining;
+            }
+            return prev;
+          });
         }
       }
     } catch {
