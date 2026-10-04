@@ -754,20 +754,14 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       const newBal = Math.max(0, parseFloat((realBalance - withdrawAmount).toFixed(2)));
       await sql`UPDATE users SET balance = ${newBal} WHERE telegram_id = ${String(userId)}`;
 
-      // Insert transaction using telegram_id only and let PostgreSQL auto-generate ID
-      let dbTxId;
-      try {
-        const insertRes = await sql`
-          INSERT INTO transactions (telegram_id, transaction_type, amount, phone_number, account_name, status, created_at)
-          VALUES (${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${String(targetPhone)}, ${String(targetName)}, 'PENDING', NOW())
-          RETURNING id
-        `;
-        if (insertRes && insertRes.length > 0) {
-          dbTxId = insertRes[0].id;
-        }
-      } catch (txErr) {
-        console.warn('Transaction record error:', txErr);
-      }
+      // Insert transaction using strict schema matching deposit table
+      const tempTxnId = 'WD_' + Math.random().toString(36).substring(2, 9);
+      const insertRes = await sql`
+        INSERT INTO transactions (telegram_id, transaction_type, amount, transaction_id, status)
+        VALUES (${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${tempTxnId}, 'PENDING')
+        RETURNING id
+      `;
+      const dbTxId = insertRes[0].id;
 
       // Send Telegram notification
       const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';

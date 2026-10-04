@@ -124,61 +124,16 @@ export default async function handler(req, res) {
       WHERE telegram_id = ${String(userId)}
     `;
 
-    // 4. Insert record into transactions table letting PostgreSQL auto-generate numeric ID
-    let dbTxId;
-    try {
-      const insertRes = await sql`
-        INSERT INTO transactions (
-          telegram_id, 
-          transaction_type, 
-          amount, 
-          phone_number, 
-          account_name, 
-          status, 
-          created_at
-        )
-        VALUES (
-          ${String(userId)},
-          'WITHDRAWAL',
-          ${amount},
-          ${String(phoneNumber)},
-          ${String(accountName)},
-          'PENDING',
-          NOW()
-        )
-        RETURNING id
-      `;
-      if (insertRes && insertRes.length > 0) {
-        dbTxId = insertRes[0].id;
-      }
-    } catch (insertErr) {
-      try {
-        const fallbackRes = await sql`
-          INSERT INTO transactions (
-            telegram_id, 
-            transaction_type, 
-            amount, 
-            status, 
-            created_at
-          )
-          VALUES (
-            ${String(userId)},
-            'WITHDRAWAL',
-            ${amount},
-            'PENDING',
-            NOW()
-          )
-          RETURNING id
-        `;
-        if (fallbackRes && fallbackRes.length > 0) {
-          dbTxId = fallbackRes[0].id;
-        }
-      } catch (compactErr) {
-        console.warn('Could not insert into transactions table:', compactErr);
-      }
-    }
+    // 4. Generate temporary string for transaction_id column & insert with strict schema
+    const tempTxnId = 'WD_' + Math.random().toString(36).substring(2, 9);
+    const insertRes = await sql`
+      INSERT INTO transactions (telegram_id, transaction_type, amount, transaction_id, status)
+      VALUES (${String(userId)}, 'WITHDRAWAL', ${amount}, ${tempTxnId}, 'PENDING')
+      RETURNING id
+    `;
+    const dbTxId = insertRes[0].id;
 
-    // 5. Send Telegram notification to Admin Group with Interactive Inline Buttons using auto-generated dbTxId
+    // 5. Send Telegram notification to Admin Group with Interactive Inline Buttons
     const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
     const ADMIN_CHAT_ID = '-1004315987317';
 
@@ -186,7 +141,7 @@ export default async function handler(req, res) {
 
     const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n` +
       `<b>Type:</b> <i>${withdrawalBadge}</i>\n\n` +
-      `<b>Transaction ID:</b> <code>${dbTxId || 'Pending'}</code>\n` +
+      `<b>Transaction ID:</b> <code>${dbTxId}</code>\n` +
       `<b>Player ID:</b> <code>${userId}</code>\n` +
       `<b>Name:</b> ${accountName}\n` +
       `<b>Phone:</b> <code>${phoneNumber}</code>\n` +
@@ -216,7 +171,7 @@ export default async function handler(req, res) {
       console.error('Failed to send Telegram admin notification:', tgErr);
     }
 
-    // 6. Return updated balance and database generated ID to frontend
+    // 6. Return updated balance and database-generated numeric ID
     return res.status(200).json({
       success: true,
       newBalance,
