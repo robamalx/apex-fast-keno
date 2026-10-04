@@ -171,7 +171,7 @@ app.post('/api/telegram/validate', (req, res) => {
 // ============================================================================
 // USER STATE & REAL ETB ACCOUNTS (DEFAULT 0.00 ETB)
 // ============================================================================
-app.get('/api/state', (req, res) => {
+app.get('/api/state', async (req, res) => {
   const userId = (req.query.userId as string) || 'default_user';
   const name = (req.query.name as string) || '';
   const username = (req.query.username as string) || '';
@@ -179,8 +179,56 @@ app.get('/api/state', (req, res) => {
   // Retrieve or create persistent user with real 0.00 ETB balance
   const user = db.getOrCreateUser(userId, name, username);
 
-  const userTickets = activeRoundTickets[userId] || [];
-  const userHistory = userBetsHistory[userId] || [];
+  let userTickets = activeRoundTickets[userId] || [];
+  let userHistory = userBetsHistory[userId] || [];
+  let userBalance = user.balance;
+  let bonusBalance = 0;
+
+  if (process.env.DATABASE_URL && userId && userId !== 'default_user') {
+    try {
+      const { neon } = await import('@neondatabase/serverless');
+      const sql = neon(process.env.DATABASE_URL);
+
+      const userRes = await sql`
+        SELECT balance, bonus_balance, first_name 
+        FROM users 
+        WHERE telegram_id = ${String(userId)}
+      `;
+
+      if (userRes.length > 0) {
+        userBalance = parseFloat(userRes[0].balance) || 0;
+        bonusBalance = parseFloat(userRes[0].bonus_balance) || 0;
+      }
+
+      // Query the tickets table for this user_id
+      const ticketRows = await sql`
+        SELECT id, user_id, draw_id, chosen_numbers, stake, payout, status, created_at
+        FROM tickets
+        WHERE user_id = ${String(userId)}
+        ORDER BY created_at DESC
+        LIMIT 50
+      `;
+
+      const formatted = ticketRows.map((row: any) => ({
+        id: row.id,
+        userId: row.user_id,
+        drawId: row.draw_id,
+        chosenNumbers: Array.isArray(row.chosen_numbers) ? row.chosen_numbers : [],
+        stake: parseFloat(row.stake) || 0,
+        payout: parseFloat(row.payout) || 0,
+        status: row.status,
+        timestamp: row.created_at ? new Date(row.created_at).toTimeString().split(' ')[0] : '',
+      }));
+
+      // Return tickets with status = 'waiting' in myTickets array
+      userTickets = formatted.filter((t: any) => t.status === 'waiting');
+
+      // Return tickets with status = 'resolved' in myBetsHistory array
+      userHistory = formatted.filter((t: any) => t.status === 'resolved');
+    } catch (err) {
+      console.error('Neon DB /api/state fetch error:', err);
+    }
+  }
 
   const counts: Record<number, number> = {};
   for (let i = 1; i <= 80; i++) counts[i] = 0;
@@ -195,7 +243,8 @@ app.get('/api/state', (req, res) => {
   res.json({
     userId: user.userId,
     name: user.name,
-    balance: user.balance, // Real ETB balance
+    balance: userBalance,
+    bonus_balance: bonusBalance,
     welcomeBonusAwarded: Boolean(user.isNewUser),
     currentDrawId: String(currentServerDrawId),
     myTickets: userTickets,
@@ -283,13 +332,31 @@ app.post('/api/bet', async (req, res) => {
         const drawIdStr = String(currentServerDrawId);
         const now = new Date();
         const timeStr = now.toTimeString().split(' ')[0];
+        const ticketId = 't_' + Math.random().toString(36).substring(2, 9);
+        const sortedNumbers = [...chosenNumbers].sort((a, b) => a - b);
+
+        // 1. Insert into tickets table with status = 'waiting'
+        await sql`
+          INSERT INTO tickets (id, user_id, draw_id, chosen_numbers, stake, payout, status, created_at)
+          VALUES (
+            ${ticketId},
+            ${String(userId)},
+            ${drawIdStr},
+            ${sortedNumbers},
+            ${parsedStake},
+            0,
+            'waiting',
+            NOW()
+          )
+        `;
+
         const ticket: TicketItem = {
-          id: 't_' + Math.random().toString(36).substring(2, 9),
+          id: ticketId,
           drawId: drawIdStr,
           userId: String(userId),
           userName: userResult[0].first_name || 'Player',
           userMasked: `${(userResult[0].first_name || 'Player').slice(0, 3)}***`,
-          chosenNumbers: [...chosenNumbers].sort((a, b) => a - b),
+          chosenNumbers: sortedNumbers,
           stake: parsedStake,
           timestamp: timeStr,
           status: 'waiting',
@@ -304,7 +371,9 @@ app.post('/api/bet', async (req, res) => {
           success: true,
           ticket,
           ticketsPlacedCount: activeRoundTickets[userId].length,
-          newBalance: parseFloat((newRealBalance + newBonusBalance).toFixed(2)),
+          newBalance: parseFloat((balance + bonus_balance).toFixed(2)),
+          realBalance: balance,
+          bonusBalance: bonus_balance,
         });
       }
     } catch (neonErr) {
@@ -364,16 +433,71 @@ app.post('/api/bet', async (req, res) => {
 // ============================================================================
 // PRNG DRAW RESOLUTION (CREDITING REAL ETB WINNINGS)
 // ============================================================================
-app.post('/api/draw/resolve', (req, res) => {
-  const { userId = 'default_user' } = req.body;
+app.post('/api/draw/resolve', async (req, res) => {
+  const { userId = 'default_user', tickets: clientTickets, drawId: reqDrawId } = req.body;
   const user = db.getOrCreateUser(userId);
 
-  const drawIdStr = String(currentServerDrawId);
+  const drawIdStr = reqDrawId ? String(reqDrawId) : String(currentServerDrawId);
   const { drawnNumbers } = generateKenoDrawPRNG();
 
   let totalWinnings = 0;
   let winningTicketsCount = 0;
-  const userTickets = activeRoundTickets[userId] || [];
+  let userTickets = activeRoundTickets[userId] || [];
+
+  if (Array.isArray(clientTickets) && clientTickets.length > 0 && userTickets.length === 0) {
+    userTickets = clientTickets;
+  }
+
+  // 3. In /api/draw/resolve: Update tickets table for all tickets matching the draw_id
+  if (process.env.DATABASE_URL) {
+    try {
+      const { neon } = await import('@neondatabase/serverless');
+      const sql = neon(process.env.DATABASE_URL);
+
+      // Fetch tickets for this draw
+      let dbTickets = await sql`
+        SELECT id, user_id, draw_id, chosen_numbers, stake, payout, status
+        FROM tickets
+        WHERE draw_id = ${drawIdStr} AND status = 'waiting'
+      `;
+
+      if (dbTickets.length === 0 && userId && userId !== 'default_user') {
+        dbTickets = await sql`
+          SELECT id, user_id, draw_id, chosen_numbers, stake, payout, status
+          FROM tickets
+          WHERE user_id = ${String(userId)} AND status = 'waiting'
+        `;
+      }
+
+      for (const t of dbTickets) {
+        const chosen = Array.isArray(t.chosen_numbers) ? t.chosen_numbers : [];
+        const matched = chosen.filter((n: number) => drawnNumbers.includes(n));
+        const matchedCount = matched.length;
+        const multiplier = calculateMultiplier(chosen.length, matchedCount);
+        const payout = Math.round((parseFloat(t.stake) || 0) * multiplier * 100) / 100;
+
+        await sql`
+          UPDATE tickets
+          SET status = 'resolved', payout = ${payout}
+          WHERE id = ${t.id}
+        `;
+
+        if (payout > 0) {
+          await sql`
+            UPDATE users
+            SET balance = balance + ${payout}
+            WHERE telegram_id = ${t.user_id}
+          `;
+          if (String(t.user_id) === String(userId)) {
+            totalWinnings += payout;
+            winningTicketsCount++;
+          }
+        }
+      }
+    } catch (neonErr) {
+      console.error('Neon DB draw resolve error:', neonErr);
+    }
+  }
 
   userTickets.forEach((ticket) => {
     const matchedNumbers = ticket.chosenNumbers.filter((n) => drawnNumbers.includes(n));
@@ -385,13 +509,11 @@ app.post('/api/draw/resolve', (req, res) => {
     ticket.matchedCount = matchedCount;
     ticket.multiplier = multiplier;
     ticket.payout = payout;
+    ticket.status = 'resolved';
 
-    if (payout > 0) {
-      ticket.status = 'win';
+    if (payout > 0 && !process.env.DATABASE_URL) {
       totalWinnings += payout;
       winningTicketsCount++;
-    } else {
-      ticket.status = 'loss';
     }
 
     if (!userBetsHistory[userId]) {
@@ -401,8 +523,8 @@ app.post('/api/draw/resolve', (req, res) => {
     if (userBetsHistory[userId].length > 100) userBetsHistory[userId].pop();
   });
 
-  // Credit real winnings persistently
-  if (totalWinnings > 0) {
+  // Credit real winnings persistently in local memory db if no Neon
+  if (totalWinnings > 0 && !process.env.DATABASE_URL) {
     db.updateUserBalance(
       userId,
       totalWinnings,

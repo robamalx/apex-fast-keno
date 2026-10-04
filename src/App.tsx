@@ -315,6 +315,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId,
+          drawId: currentDrawId,
           tickets: myTicketsRef.current,
         }),
       });

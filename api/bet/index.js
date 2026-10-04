@@ -17,9 +17,10 @@ export default async function handler(req, res) {
   const telegramId = body?.telegram_id || body?.userId || body?.telegramId;
   const betAmount = body?.stake || body?.amount || body?.betAmount;
   const chosenNumbers = body?.chosenNumbers || [];
+  const drawId = body?.drawId || String(Date.now()).slice(-9);
 
   if (!telegramId) {
-    return res.status(400).json({ error: 'Missing telegram_id' });
+    return res.status(400).json({ error: 'Missing telegram_id or userId' });
   }
 
   const parsedBetAmount = parseFloat(betAmount);
@@ -27,11 +28,23 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid bet amount' });
   }
 
+  const formattedNumbers = Array.isArray(chosenNumbers)
+    ? chosenNumbers.map(Number).filter((n) => !isNaN(n) && n >= 1 && n <= 80).sort((a, b) => a - b)
+    : [];
+
+  if (formattedNumbers.length === 0) {
+    return res.status(400).json({ error: 'Please choose between 1 and 10 numbers' });
+  }
+
   try {
     const sql = neon(process.env.DATABASE_URL);
 
     // 1. Fetch user's current balances first
-    const userResult = await sql`SELECT balance, bonus_balance, first_name FROM users WHERE telegram_id = ${telegramId}`;
+    const userResult = await sql`
+      SELECT balance, bonus_balance, first_name 
+      FROM users 
+      WHERE telegram_id = ${String(telegramId)}
+    `;
 
     if (userResult.length === 0) {
       return res.status(404).json({ error: 'User not found' });
@@ -48,15 +61,13 @@ export default async function handler(req, res) {
 
     // Check if bet amount exceeds available funds
     if (parsedBetAmount > totalFunds) {
-      return res.status(400).json({ error: 'Insufficient Funds' });
+      return res.status(400).json({ error: 'Insufficient funds' });
     }
 
-    // Deduct the bet properly:
+    // Deduct the bet properly: bonus first, then real balance
     if (parsedBetAmount <= bonus_balance) {
-      // Deduct entirely from bonus_balance
       bonus_balance -= parsedBetAmount;
     } else {
-      // Drain bonus_balance to 0, subtract remainder from main balance
       const remainder = parsedBetAmount - bonus_balance;
       bonus_balance = 0;
       balance -= remainder;
@@ -66,36 +77,46 @@ export default async function handler(req, res) {
     balance = Math.max(0, parseFloat(balance.toFixed(2)));
     bonus_balance = Math.max(0, parseFloat(bonus_balance.toFixed(2)));
 
-    // 3. Save updated balances to database
-    await sql`UPDATE users SET balance = ${balance}, bonus_balance = ${bonus_balance} WHERE telegram_id = ${telegramId}`;
+    // Save updated balances to database
+    await sql`
+      UPDATE users 
+      SET balance = ${balance}, bonus_balance = ${bonus_balance} 
+      WHERE telegram_id = ${String(telegramId)}
+    `;
 
-    // 4. Build ticket entry
-    const now = new Date();
-    const timeStr = now.toTimeString().split(' ')[0];
+    // 2. Insert the new ticket into the tickets table with status = 'waiting'
     const ticketId = 't_' + Math.random().toString(36).substring(2, 9);
     const playerName = user.first_name || 'Player';
 
+    await sql`
+      INSERT INTO tickets (id, user_id, draw_id, chosen_numbers, stake, payout, status, created_at)
+      VALUES (
+        ${ticketId},
+        ${String(telegramId)},
+        ${String(drawId)},
+        ${formattedNumbers},
+        ${parsedBetAmount},
+        0,
+        'waiting',
+        NOW()
+      )
+    `;
+
+    const now = new Date();
+    const timeStr = now.toTimeString().split(' ')[0];
+
     const ticket = {
       id: ticketId,
-      drawId: body?.drawId || String(Date.now()).slice(-9),
+      drawId: String(drawId),
       userId: String(telegramId),
       userName: playerName,
       userMasked: `${playerName.slice(0, 3)}***`,
-      chosenNumbers: Array.isArray(chosenNumbers) ? [...chosenNumbers].sort((a, b) => a - b) : [],
+      chosenNumbers: formattedNumbers,
       stake: parsedBetAmount,
+      payout: 0,
       timestamp: timeStr,
       status: 'waiting',
     };
-
-    // Optional ticket insert if tickets table exists
-    try {
-      await sql`
-        INSERT INTO tickets (ticket_id, telegram_id, chosen_numbers, stake, status, created_at)
-        VALUES (${ticketId}, ${telegramId}, ${JSON.stringify(ticket.chosenNumbers)}, ${parsedBetAmount}, 'waiting', NOW())
-      `;
-    } catch {
-      // Optional table fallback
-    }
 
     const newTotalBalance = parseFloat((balance + bonus_balance).toFixed(2));
 
@@ -104,12 +125,12 @@ export default async function handler(req, res) {
       ticket,
       ticketsPlacedCount: 1,
       newBalance: newTotalBalance,
-      balance: newTotalBalance,
-      realBalance: balance,
+      balance: balance,
       bonusBalance: bonus_balance,
+      realBalance: balance,
     });
   } catch (error) {
-    console.error('API Error in bet handler:', error);
-    return res.status(500).json({ error: 'Failed to process bet' });
+    console.error('API Error in /api/bet:', error);
+    return res.status(500).json({ error: 'Failed to process bet and save ticket' });
   }
 }
