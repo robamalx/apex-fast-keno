@@ -61,29 +61,29 @@ export default async function handler(req, res) {
       });
     }
 
-    // Server Validation 3: Query transactions table for approved lifetime deposits using telegram_id only
-    let totalDeposited = 0;
-    try {
-      const depositRes = await sql`
-        SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0) AS total_deposits
-        FROM transactions
-        WHERE telegram_id = ${String(userId)}
-          AND UPPER(transaction_type) = 'DEPOSIT'
-          AND UPPER(status) = 'APPROVED'
-      `;
+    // Server Validation 3: Query transactions table and compute deposits in JavaScript
+    const depositRes = await sql`
+      SELECT transaction_type, status, amount
+      FROM transactions
+      WHERE telegram_id = ${String(userId)}
+    `;
 
-      if (depositRes.length > 0) {
-        totalDeposited = parseFloat(depositRes[0].total_deposits) || 0;
+    let approvedDeposits = 0;
+    let pendingDeposits = 0;
+
+    depositRes.forEach((row) => {
+      if (String(row.transaction_type).toUpperCase() === 'DEPOSIT') {
+        if (String(row.status).toUpperCase() === 'APPROVED') {
+          approvedDeposits += parseFloat(row.amount) || 0;
+        } else {
+          pendingDeposits += parseFloat(row.amount) || 0;
+        }
       }
-    } catch (txQueryErr) {
-      console.warn('Transaction table query notice:', txQueryErr);
-    }
+    });
 
-    if (totalDeposited < 200) {
+    if (approvedDeposits < 200) {
       return res.status(400).json({
-        error: 'You must deposit at least 200 ETB total to unlock withdrawals.',
-        totalDeposited,
-        requiredDeposit: 200,
+        error: `Deposit Rule Failed. Approved: ${approvedDeposits} ETB | Pending: ${pendingDeposits} ETB. You must have 200 ETB in APPROVED deposits.`,
       });
     }
 
