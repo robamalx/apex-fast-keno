@@ -95,7 +95,7 @@ export default async function handler(req, res) {
       WHERE telegram_id = ${String(userId)}
     `;
 
-    // 3. Insert record into transactions table using telegram_id only
+    // 3. Generate unique transaction ID and record in transactions table
     const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
     try {
       await sql`
@@ -121,7 +121,7 @@ export default async function handler(req, res) {
         )
       `;
     } catch (insertErr) {
-      // Fallback for compact transactions schema
+      // Fallback for compact schema
       try {
         await sql`
           INSERT INTO transactions (
@@ -144,15 +144,17 @@ export default async function handler(req, res) {
       }
     }
 
-    // 4. Send Telegram notification to Admin Group
+    // 4. Send Telegram notification to Admin Group with Interactive Action Buttons
     const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
     const ADMIN_CHAT_ID = '-1004315987317';
 
-    const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n` +
+    const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n\n` +
+      `<b>Transaction ID:</b> <code>${txId}</code>\n` +
       `<b>Player ID:</b> <code>${userId}</code>\n` +
       `<b>Name:</b> ${accountName}\n` +
       `<b>Phone:</b> <code>${phoneNumber}</code>\n` +
       `<b>Amount:</b> <b>${amount.toFixed(2)} ETB</b>\n` +
+      `<b>Status:</b> ⏳ <b>PENDING</b>\n` +
       `<b>Timestamp:</b> ${new Date().toISOString()}`;
 
     try {
@@ -163,6 +165,14 @@ export default async function handler(req, res) {
           chat_id: ADMIN_CHAT_ID,
           text: messageText,
           parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Approve', callback_data: `wd_approve_${txId}` },
+                { text: '❌ Reject', callback_data: `wd_reject_${txId}` },
+              ],
+            ],
+          },
         }),
       });
     } catch (tgErr) {
@@ -174,6 +184,7 @@ export default async function handler(req, res) {
       success: true,
       newBalance,
       amount,
+      txId,
       message: `Withdrawal request for ${amount.toFixed(2)} ETB submitted successfully.`,
     });
   } catch (error) {

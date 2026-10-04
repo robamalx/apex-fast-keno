@@ -744,17 +744,31 @@ const handleWithdrawalRequest = async (req: any, res: any) => {
       // Send Telegram notification
       const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
       const ADMIN_CHAT_ID = '-1004315987317';
-      const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n` +
+      const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n\n` +
+        `<b>Transaction ID:</b> <code>${txId}</code>\n` +
         `<b>Player ID:</b> <code>${userId}</code>\n` +
         `<b>Name:</b> ${targetName}\n` +
         `<b>Phone:</b> <code>${targetPhone}</code>\n` +
-        `<b>Amount:</b> <b>${withdrawAmount.toFixed(2)} ETB</b>`;
+        `<b>Amount:</b> <b>${withdrawAmount.toFixed(2)} ETB</b>\n` +
+        `<b>Status:</b> ⏳ <b>PENDING</b>`;
 
       try {
         await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: ADMIN_CHAT_ID, text: messageText, parse_mode: 'HTML' }),
+          body: JSON.stringify({
+            chat_id: ADMIN_CHAT_ID,
+            text: messageText,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '✅ Approve', callback_data: `wd_approve_${txId}` },
+                  { text: '❌ Reject', callback_data: `wd_reject_${txId}` },
+                ],
+              ],
+            },
+          }),
         });
       } catch (tgErr) {
         console.error('Telegram notification error:', tgErr);
