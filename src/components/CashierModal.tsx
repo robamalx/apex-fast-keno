@@ -40,7 +40,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   // Withdraw Form State
   const [withdrawPhone, setWithdrawPhone] = useState(phoneNumber);
   const [withdrawName, setWithdrawName] = useState('');
-  const [withdrawAmount, setWithdrawAmount] = useState('100');
+  const [withdrawAmount, setWithdrawAmount] = useState('1000');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [withdrawError, setWithdrawError] = useState('');
 
@@ -71,20 +71,24 @@ export const CashierModal: React.FC<CashierModalProps> = ({
     e.preventDefault();
     const amountNum = Number(withdrawAmount);
 
-    if (isNaN(amountNum) || amountNum < 50) {
-      setWithdrawError('Minimum withdrawal is 50.00 ETB.');
+    // Client-side Validation: Minimum withdrawal is 1000 ETB
+    if (isNaN(amountNum) || amountNum < 1000) {
+      setWithdrawError('Minimum withdrawal is 1000 ETB.');
+      showToast('Minimum withdrawal is 1000 ETB.', 'error');
       haptic.notification('warning');
       return;
     }
 
     if (amountNum > balance) {
-      setWithdrawError('Withdrawal amount exceeds available balance.');
+      setWithdrawError(`Withdrawal amount exceeds available balance (${balance.toFixed(2)} ETB).`);
+      showToast('Insufficient balance.', 'error');
       haptic.notification('error');
       return;
     }
 
     if (!withdrawPhone || !withdrawName) {
       setWithdrawError('Please provide phone number and account name.');
+      showToast('Please provide phone number and account name.', 'warning');
       haptic.notification('warning');
       return;
     }
@@ -94,12 +98,13 @@ export const CashierModal: React.FC<CashierModalProps> = ({
     haptic.impact('heavy');
 
     try {
-      const res = await fetch('/api/wallet/withdraw', {
+      const res = await fetch('/api/withdraw', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId,
           amount: amountNum,
+          phoneNumber: withdrawPhone,
           phone: withdrawPhone,
           accountName: withdrawName,
         }),
@@ -109,6 +114,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
 
       if (!res.ok) {
         setWithdrawError(data.error || 'Withdrawal request failed.');
+        showToast(data.error || 'Withdrawal request failed.', 'error');
         haptic.notification('error');
         return;
       }
@@ -119,6 +125,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
       onClose();
     } catch {
       setWithdrawError('Network error processing withdrawal.');
+      showToast('Network error processing withdrawal.', 'error');
       haptic.notification('error');
     } finally {
       setIsWithdrawing(false);
@@ -250,7 +257,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
                   type="number"
                   value={withdrawAmount}
                   onChange={(e) => setWithdrawAmount(e.target.value)}
-                  placeholder="Min 50 ETB"
+                  placeholder="Min 1000 ETB"
                   className="w-full bg-[#050807] border border-[#1f3127] rounded-xl p-3 text-white font-mono-num font-bold text-sm focus:outline-none focus:border-[#00e699]"
                 />
               </div>

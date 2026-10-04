@@ -660,22 +660,115 @@ app.post('/api/wallet/deposit/sms', (req, res) => {
 });
 
 // ============================================================================
-// WITHDRAWAL REQUEST
+// WITHDRAWAL REQUEST (MIN 1000 ETB & 200 ETB LIFETIME DEPOSIT REQUIRED)
 // ============================================================================
-app.post('/api/wallet/withdraw', (req, res) => {
-  const { userId = 'default_user', phone, accountName, amount } = req.body;
+const handleWithdrawalRequest = async (req: any, res: any) => {
+  const { userId = 'default_user', phone, phoneNumber, accountName, name, amount } = req.body;
+  const targetPhone = phone || phoneNumber;
+  const targetName = accountName || name;
+  const withdrawAmount = Number(amount);
 
-  if (!phone || !accountName) {
+  if (!targetPhone || !targetName) {
     return res.status(400).json({ error: 'Phone number and account name are required.' });
   }
 
-  const withdrawAmount = Number(amount);
-  if (isNaN(withdrawAmount) || withdrawAmount < 50) {
-    return res.status(400).json({ error: 'Minimum withdrawal amount is 50.00 ETB.' });
+  // Server Validation 1: Min 1000 ETB
+  if (isNaN(withdrawAmount) || withdrawAmount < 1000) {
+    return res.status(400).json({ error: 'Minimum withdrawal is 1000 ETB.' });
+  }
+
+  if (process.env.DATABASE_URL && userId && userId !== 'default_user') {
+    try {
+      const { neon } = await import('@neondatabase/serverless');
+      const sql = neon(process.env.DATABASE_URL);
+
+      // Server Validation 2: Fetch real balance
+      const userRes = await sql`
+        SELECT balance, bonus_balance 
+        FROM users 
+        WHERE telegram_id = ${String(userId)}
+      `;
+
+      if (userRes.length === 0) {
+        return res.status(404).json({ error: 'User not found.' });
+      }
+
+      const realBalance = parseFloat(userRes[0].balance) || 0;
+      if (realBalance < withdrawAmount) {
+        return res.status(400).json({
+          error: `Insufficient real balance. Available: ${realBalance.toFixed(2)} ETB (bonus balance cannot be withdrawn).`,
+        });
+      }
+
+      // Server Validation 3: Check lifetime approved deposits >= 200 ETB
+      let totalDeposited = 0;
+      try {
+        const depRes = await sql`
+          SELECT COALESCE(SUM(amount), 0) AS total_deposits
+          FROM transactions
+          WHERE (user_id = ${String(userId)} OR telegram_id = ${String(userId)})
+            AND UPPER(transaction_type) = 'DEPOSIT'
+            AND UPPER(status) = 'APPROVED'
+        `;
+        if (depRes.length > 0) {
+          totalDeposited = parseFloat(depRes[0].total_deposits) || 0;
+        }
+      } catch (depErr) {
+        console.warn('Deposit check error:', depErr);
+      }
+
+      if (totalDeposited < 200) {
+        return res.status(400).json({
+          error: 'You must deposit at least 200 ETB total to unlock withdrawals.',
+          totalDeposited,
+        });
+      }
+
+      // Deduct amount
+      const newBal = Math.max(0, parseFloat((realBalance - withdrawAmount).toFixed(2)));
+      await sql`UPDATE users SET balance = ${newBal} WHERE telegram_id = ${String(userId)}`;
+
+      // Insert transaction
+      const txId = 'tx_wd_' + Math.random().toString(36).substring(2, 9);
+      try {
+        await sql`
+          INSERT INTO transactions (id, user_id, telegram_id, transaction_type, amount, phone_number, account_name, status, created_at)
+          VALUES (${txId}, ${String(userId)}, ${String(userId)}, 'WITHDRAWAL', ${withdrawAmount}, ${String(targetPhone)}, ${String(targetName)}, 'PENDING', NOW())
+        `;
+      } catch (txErr) {
+        console.warn('Transaction record error:', txErr);
+      }
+
+      // Send Telegram notification
+      const BOT_TOKEN = '8230347188:AAHH0dDjBYhuq7TuXr-Gr7dviZDha_wxTbQ';
+      const ADMIN_CHAT_ID = '-1004315987317';
+      const messageText = `🚨 <b>NEW WITHDRAWAL REQUEST</b> 🚨\n` +
+        `<b>Player ID:</b> <code>${userId}</code>\n` +
+        `<b>Name:</b> ${targetName}\n` +
+        `<b>Phone:</b> <code>${targetPhone}</code>\n` +
+        `<b>Amount:</b> <b>${withdrawAmount.toFixed(2)} ETB</b>`;
+
+      try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: ADMIN_CHAT_ID, text: messageText, parse_mode: 'HTML' }),
+        });
+      } catch (tgErr) {
+        console.error('Telegram notification error:', tgErr);
+      }
+
+      return res.json({
+        success: true,
+        newBalance: newBal,
+        message: `Withdrawal request for ${withdrawAmount.toFixed(2)} ETB submitted!`,
+      });
+    } catch (neonErr) {
+      console.error('Neon withdrawal error:', neonErr);
+    }
   }
 
   const user = db.getOrCreateUser(userId);
-
   if (user.balance < withdrawAmount) {
     return res.status(400).json({
       error: `Insufficient balance! Available: ${user.balance.toFixed(2)} ETB.`,
@@ -686,19 +779,18 @@ app.post('/api/wallet/withdraw', (req, res) => {
     userId,
     -withdrawAmount,
     'withdrawal',
-    `Telebirr Withdrawal to ${phone} (${accountName})`
+    `Telebirr Withdrawal to ${targetPhone} (${targetName})`
   );
-
-  if (!updateRes.success) {
-    return res.status(400).json({ error: updateRes.error || 'Withdrawal failed.' });
-  }
 
   res.json({
     success: true,
     newBalance: updateRes.newBalance,
-    message: `Withdrawal request for ${withdrawAmount.toFixed(2)} ETB submitted to Telebirr (${phone})!`,
+    message: `Withdrawal request for ${withdrawAmount.toFixed(2)} ETB submitted to Telebirr (${targetPhone})!`,
   });
-});
+};
+
+app.post('/api/withdraw', handleWithdrawalRequest);
+app.post('/api/wallet/withdraw', handleWithdrawalRequest);
 
 // ============================================================================
 // VIP DAILY RELOAD BONUS CLAIM
