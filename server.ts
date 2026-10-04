@@ -253,33 +253,30 @@ app.post('/api/bet', async (req, res) => {
       const userResult = await sql`SELECT balance, bonus_balance, first_name FROM users WHERE telegram_id = ${String(userId)}`;
 
       if (userResult.length > 0) {
-        const realBalance = parseFloat(String(userResult[0].balance)) || 0;
-        const bonusBalance = parseFloat(String(userResult[0].bonus_balance)) || 0;
-        const totalPlayableBalance = realBalance + bonusBalance;
+        let balance = parseFloat(String(userResult[0].balance)) || 0;
+        let bonus_balance = parseFloat(String(userResult[0].bonus_balance)) || 0;
+        const totalFunds = balance + bonus_balance;
 
-        if (totalPlayableBalance < parsedStake) {
+        if (parsedStake > totalFunds) {
           return res.status(400).json({
-            error: `Insufficient balance! Your balance is ${totalPlayableBalance.toFixed(2)} ETB. Please deposit to play.`,
+            error: 'Insufficient Funds',
           });
         }
 
-        let newBonusBalance = bonusBalance;
-        let newRealBalance = realBalance;
-
-        if (bonusBalance >= parsedStake) {
-          newBonusBalance = bonusBalance - parsedStake;
+        if (parsedStake <= bonus_balance) {
+          bonus_balance -= parsedStake;
         } else {
-          const remainder = parsedStake - bonusBalance;
-          newBonusBalance = 0;
-          newRealBalance = realBalance - remainder;
+          const remainder = parsedStake - bonus_balance;
+          bonus_balance = 0;
+          balance -= remainder;
         }
 
-        newBonusBalance = Math.max(0, newBonusBalance);
-        newRealBalance = Math.max(0, newRealBalance);
+        balance = Math.max(0, parseFloat(balance.toFixed(2)));
+        bonus_balance = Math.max(0, parseFloat(bonus_balance.toFixed(2)));
 
         await sql`
           UPDATE users 
-          SET balance = ${newRealBalance}, bonus_balance = ${newBonusBalance} 
+          SET balance = ${balance}, bonus_balance = ${bonus_balance} 
           WHERE telegram_id = ${userId}
         `;
 
