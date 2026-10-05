@@ -16,7 +16,8 @@ interface CashierModalProps {
   onClose: () => void;
   balance: number;
   receiverName: string;
-  phoneNumber: string;
+  phoneNumber?: string;
+  depositNumber?: string;
   userId?: string;
   onDepositVerified: (amount: number, newBalance: number) => void;
   onWithdrawSubmitted: (newBalance: number, amount: number) => void;
@@ -28,7 +29,8 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   onClose,
   balance,
   receiverName,
-  phoneNumber,
+  phoneNumber = '',
+  depositNumber = phoneNumber || 'Loading...',
   userId = 'real_user',
   onDepositVerified,
   onWithdrawSubmitted,
@@ -38,7 +40,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   const [copied, setCopied] = useState(false);
 
   // Withdraw Form State
-  const [withdrawPhone, setWithdrawPhone] = useState(phoneNumber);
+  const [withdrawPhone, setWithdrawPhone] = useState('');
   const [withdrawName, setWithdrawName] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('200');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
@@ -47,11 +49,15 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   if (!isOpen) return null;
 
   const handleCopyNumber = () => {
-    navigator.clipboard.writeText(phoneNumber);
-    setCopied(true);
-    haptic.selection();
-    showToast('Phone number copied to clipboard!', 'info');
-    setTimeout(() => setCopied(false), 2000);
+    if (depositNumber && depositNumber !== 'Loading...') {
+      navigator.clipboard.writeText(depositNumber);
+      setCopied(true);
+      haptic.selection();
+      showToast('Deposit number copied to clipboard!', 'info');
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      showToast('Deposit number is loading...', 'info');
+    }
   };
 
   const handleCloseToSendReceipt = () => {
@@ -210,19 +216,19 @@ export const CashierModal: React.FC<CashierModalProps> = ({
                   <p className="text-slate-300">
                     Send your ETB via Telebirr to{' '}
                     <strong className="text-[#00e699] font-mono font-bold tracking-wider">
-                      {phoneNumber || '[YOUR PHONE NUMBER]'}
+                      {depositNumber}
                     </strong>
                     . Then, close this game and paste your exact Telebirr SMS receipt into the bot chat.
                   </p>
                 </div>
 
                 {/* Quick Copy Phone Pill */}
-                {phoneNumber && (
+                {depositNumber && (
                   <div className="flex items-center justify-between bg-[#0a140e] p-2.5 rounded-xl border border-[#1a2c20]">
                     <div>
                       <span className="text-[10px] text-slate-400 block">Telebirr Number:</span>
                       <span className="font-extrabold text-white font-mono text-sm tracking-wider">
-                        {phoneNumber}
+                        {depositNumber}
                       </span>
                     </div>
                     <button

@@ -31,7 +31,8 @@ export default function App() {
 
   // Telebirr Configuration State
   const [receiverName, setReceiverName] = useState<string>('Robinson Solomon');
-  const [phoneNumber, setPhoneNumber] = useState<string>('0963068117');
+  const [depositNumber, setDepositNumber] = useState<string>('Loading...');
+  const [phoneNumber, setPhoneNumber] = useState<string>('Loading...');
 
   // Core Game State: Synchronized Round Loop
   // Real cash balance and promotional bonus balance tracked separately
@@ -170,7 +171,13 @@ export default function App() {
         if (data.hotNumbers) setHotNumbers(data.hotNumbers);
         if (data.coldNumbers) setColdNumbers(data.coldNumbers);
         if (data.receiverName) setReceiverName(data.receiverName);
-        if (data.phoneNumber) setPhoneNumber(data.phoneNumber);
+        if (data.deposit_number) {
+          setDepositNumber(data.deposit_number);
+          setPhoneNumber(data.deposit_number);
+        } else if (data.phoneNumber) {
+          setPhoneNumber(data.phoneNumber);
+          setDepositNumber((prev) => (prev === 'Loading...' ? data.phoneNumber : prev));
+        }
       }
     } catch {
       // Offline fallback
@@ -206,19 +213,26 @@ export default function App() {
 
       const data = await res.json();
 
-      if (data && data.registered) {
-        setIsRegistered(true);
-        // Set real cash balance and bonus balance separately
-        const realBal = parseFloat(String(data.user?.balance ?? 0)) || 0;
-        const bonusBal = parseFloat(String(data.user?.bonus_balance ?? 0)) || 0;
-        setBalance(realBal);
-        setBonus(bonusBal);
-
-        if (data.user?.first_name) {
-          setPlayerName(data.user.first_name);
+      if (data) {
+        if (data.deposit_number) {
+          setDepositNumber(data.deposit_number);
+          setPhoneNumber(data.deposit_number);
         }
-      } else {
-        setIsRegistered(false);
+
+        if (data.registered) {
+          setIsRegistered(true);
+          // Set real cash balance and bonus balance separately
+          const realBal = parseFloat(String(data.user?.balance ?? 0)) || 0;
+          const bonusBal = parseFloat(String(data.user?.bonus_balance ?? 0)) || 0;
+          setBalance(realBal);
+          setBonus(bonusBal);
+
+          if (data.user?.first_name) {
+            setPlayerName(data.user.first_name);
+          }
+        } else {
+          setIsRegistered(false);
+        }
       }
     } catch (err) {
       console.error('Registration verification error:', err);
@@ -843,7 +857,8 @@ export default function App() {
         onClose={() => setIsCashierOpen(false)}
         balance={balance}
         receiverName={receiverName}
-        phoneNumber={phoneNumber}
+        phoneNumber={depositNumber}
+        depositNumber={depositNumber}
         userId={getRealUserId()}
         onDepositVerified={handleDepositVerified}
         onWithdrawSubmitted={handleWithdrawSubmitted}
