@@ -16,7 +16,45 @@ import { Ticket, DrawResult, CommunityBet, TelegramUser } from './types/keno';
 import { checkIsAuthorizedAdmin } from './config/adminConfig';
 import { calculateMultiplier } from './utils/paytable';
 
-export default function App() {
+export interface AppProps {
+  isB2B?: boolean;
+  playerId?: string;
+  sessionToken?: string;
+}
+
+export default function App({
+  isB2B: initialIsB2B = false,
+  playerId: initialPlayerId,
+  sessionToken: initialSessionToken,
+}: AppProps = {}) {
+  // Detect B2B props or query params
+  const [isB2BState] = useState<boolean>(() => {
+    if (initialIsB2B) return true;
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('isB2B') === 'true' || window.location.pathname.startsWith('/embed');
+    }
+    return false;
+  });
+
+  const [b2bPlayerId] = useState<string>(() => {
+    if (initialPlayerId) return initialPlayerId;
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('playerId') || '';
+    }
+    return '';
+  });
+
+  const [b2bSessionToken] = useState<string>(() => {
+    if (initialSessionToken) return initialSessionToken;
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('sessionToken') || params.get('token') || '';
+    }
+    return '';
+  });
+
   // Navigation View State: Dedicated Fast Keno Mini App (Direct Launch into FAST_KENO)
   const [currentView, setCurrentView] = useState<AppView>('FAST_KENO');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -26,8 +64,8 @@ export default function App() {
   const [playerName, setPlayerName] = useState<string>('Player');
 
   // Registration & Access Control State (Cloudflare Worker Integration)
-  const [isCheckingRegistration, setIsCheckingRegistration] = useState<boolean>(true);
-  const [isRegistered, setIsRegistered] = useState<boolean>(false);
+  const [isCheckingRegistration, setIsCheckingRegistration] = useState<boolean>(!isB2BState);
+  const [isRegistered, setIsRegistered] = useState<boolean>(isB2BState);
 
   // Telebirr Configuration State
   const [receiverName, setReceiverName] = useState<string>('Robinson Solomon');
@@ -186,6 +224,13 @@ export default function App() {
 
   // Check registration and balance via Cloudflare Worker
   const checkUserRegistration = useCallback(async (explicitId?: number | string) => {
+    // For B2B Seamless Wallet players, registration check is bypassed
+    if (isB2BState) {
+      setIsRegistered(true);
+      setIsCheckingRegistration(false);
+      return;
+    }
+
     setIsCheckingRegistration(true);
 
     const tgId =
@@ -240,7 +285,40 @@ export default function App() {
     } finally {
       setIsCheckingRegistration(false);
     }
-  }, []);
+  }, [isB2BState]);
+
+  // B2B Initial Setup: Fetch initial player balance from Seamless Wallet
+  useEffect(() => {
+    if (!isB2BState) return;
+
+    if (b2bPlayerId) {
+      setPlayerName(b2bPlayerId);
+    }
+
+    const fetchB2BBalance = async () => {
+      try {
+        const res = await fetch('/api/b2b/wallet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'balance',
+            playerId: b2bPlayerId || getRealUserId(),
+            token: b2bSessionToken,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (typeof data.balance === 'number') {
+            setBalance(data.balance);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch initial B2B balance:', err);
+      }
+    };
+
+    fetchB2BBalance();
+  }, [isB2BState, b2bPlayerId, b2bSessionToken, getRealUserId]);
 
   // Telegram Mini App Script Injection & Initialization
   useEffect(() => {
@@ -457,6 +535,36 @@ export default function App() {
           handleWin(totalWinnings);
           haptic.notification('success');
           showToast(`🎉 Round Won! +${totalWinnings.toFixed(2)} ETB Credited`, 'success');
+
+          // Credit (Winning): If the player won > 0 and isB2B is true, make a POST request to
+          // /api/b2b/wallet with { action: 'credit', amount: winAmount, playerId, token: sessionToken }
+          if (isB2BState) {
+            try {
+              fetch('/api/b2b/wallet', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'credit',
+                  amount: totalWinnings,
+                  playerId: b2bPlayerId || getRealUserId(),
+                  token: b2bSessionToken,
+                }),
+              })
+                .then(async (creditRes) => {
+                  if (creditRes.ok) {
+                    const creditData = await creditRes.json().catch(() => ({}));
+                    if (typeof creditData.balance === 'number') {
+                      setBalance(creditData.balance);
+                    }
+                  }
+                })
+                .catch((creditErr) => {
+                  console.error('B2B credit network error:', creditErr);
+                });
+            } catch (err) {
+              console.error('B2B credit failed:', err);
+            }
+          }
         } else if (currentActiveTickets.length > 0) {
           haptic.notification('error');
         }
@@ -578,20 +686,58 @@ export default function App() {
     }
 
     const betAmount = stake;
-    const totalFunds = balance + bonus;
 
-    if (betAmount > totalFunds) {
-      alert('Insufficient balance');
-      return;
-    }
+    // Debit (Placing a Bet): When the player clicks "Bet", check if isB2B is true.
+    // If it is, do not use the local Telegram balance. Instead, make a POST request to
+    // Next.js route /api/b2b/wallet with { action: 'debit', amount: betAmount, playerId, token: sessionToken }.
+    // Wait for a 200 OK response before allowing the ticket to be placed. If it fails, show an "Insufficient Funds" or error toast.
+    if (isB2BState) {
+      try {
+        const debitRes = await fetch('/api/b2b/wallet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'debit',
+            amount: betAmount,
+            playerId: b2bPlayerId || getRealUserId(),
+            token: b2bSessionToken,
+          }),
+        });
 
-    // Deduct from bonus first, then real balance
-    if (betAmount <= bonus) {
-      setBonus((prev) => prev - betAmount);
+        if (!debitRes.ok) {
+          const errData = await debitRes.json().catch(() => ({}));
+          haptic.notification('error');
+          showToast(errData.error || errData.message || 'Insufficient Funds', 'error');
+          return;
+        }
+
+        const debitData = await debitRes.json().catch(() => ({}));
+        if (typeof debitData.balance === 'number') {
+          setBalance(debitData.balance);
+        } else {
+          setBalance((prev) => Math.max(0, parseFloat((prev - betAmount).toFixed(2))));
+        }
+      } catch (debitErr) {
+        haptic.notification('error');
+        showToast('Wallet debit failed / connection error', 'error');
+        return;
+      }
     } else {
-      const remainingBet = betAmount - bonus;
-      setBonus(0);
-      setBalance((prev) => prev - remainingBet);
+      const totalFunds = balance + bonus;
+
+      if (betAmount > totalFunds) {
+        showToast('Insufficient balance', 'error');
+        return;
+      }
+
+      // Deduct from bonus first, then real balance
+      if (betAmount <= bonus) {
+        setBonus((prev) => prev - betAmount);
+      } else {
+        const remainingBet = betAmount - bonus;
+        setBonus(0);
+        setBalance((prev) => prev - remainingBet);
+      }
     }
 
     haptic.impact('heavy');

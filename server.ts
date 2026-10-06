@@ -834,6 +834,49 @@ app.post('/api/withdraw', handleWithdrawalRequest);
 app.post('/api/wallet/withdraw', handleWithdrawalRequest);
 
 // ============================================================================
+// B2B SEAMLESS WALLET PROXY
+// ============================================================================
+app.post('/api/b2b/wallet', async (req, res) => {
+  const workerBaseUrl =
+    process.env.WORKER_URL ||
+    process.env.CLOUDFLARE_WORKER_URL ||
+    'https://apex-keno-bot.robinsonslmn.workers.dev';
+  const targetUrl = `${workerBaseUrl.replace(/\/+$/, '')}/api/b2b/wallet`;
+
+  try {
+    const forwardHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (req.headers['authorization']) {
+      forwardHeaders['Authorization'] = String(req.headers['authorization']);
+    }
+
+    const upstreamResponse = await fetch(targetUrl, {
+      method: 'POST',
+      headers: forwardHeaders,
+      body: JSON.stringify(req.body),
+    });
+
+    const statusCode = upstreamResponse.status;
+    const contentType = upstreamResponse.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+      const data = await upstreamResponse.json();
+      return res.status(statusCode).json(data);
+    } else {
+      const text = await upstreamResponse.text();
+      return res.status(statusCode).send(text);
+    }
+  } catch (error: any) {
+    console.error('B2B Wallet proxy error:', error);
+    return res.status(502).json({
+      error: 'Failed to connect to B2B wallet provider',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+// ============================================================================
 // VIP DAILY RELOAD BONUS CLAIM
 // ============================================================================
 app.post('/api/wallet/claim-bonus', (req, res) => {
