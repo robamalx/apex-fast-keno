@@ -343,9 +343,11 @@ export default function App() {
 
   // Sequential 20-Ball Reveal (Step-by-Step, 20 Balls across ~10s in the 15s DRAWING window)
   const triggerDrawSequence = useCallback(async (targetDrawId: string) => {
-    // 1. Lock game in DRAWING state and clear previous draw balls
+    // 1. Lock game in DRAWING state, clear un-submitted temporary selections, and clear previous draw balls
     setPhase('drawing');
     phaseRef.current = 'drawing';
+    setSelectedNumbers([]);
+    selectedNumbersRef.current = [];
     setDrawnBalls([]);
     setLastDrawnBall(undefined);
     setIsDrawFinished(false);
@@ -399,7 +401,7 @@ export default function App() {
         setDrawnBalls((prev) => [...prev, ball]);
         setLastDrawnBall(ball);
 
-        const isPlayerHit = playerTicketNumbers.has(ball) || selectedNumbersRef.current.includes(ball);
+        const isPlayerHit = playerTicketNumbers.has(ball);
         if (isPlayerHit) {
           haptic.hitReveal();
         } else {
@@ -494,6 +496,8 @@ export default function App() {
         if (phaseRef.current !== 'drawing') {
           setPhase('drawing');
           phaseRef.current = 'drawing';
+          setSelectedNumbers([]);
+          selectedNumbersRef.current = [];
         }
         if (drawnRoundIdRef.current !== roundId) {
           drawnRoundIdRef.current = roundId;

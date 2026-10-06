@@ -52,11 +52,11 @@ export const FastKenoBoardStage: React.FC<FastKenoBoardStageProps> = ({
   const isMaxTicketsReached = ticketsPlacedCount >= 20;
   const isDrawingOrReset = phase === 'drawing' || phase === 'reset';
 
-  // Union of current selection and any active tickets
-  const playerTargets = Array.from(new Set([...selectedNumbers, ...allPlayerChosenNumbers]));
+  // Strict Highlighting: Only submitted/confirmed bets count as active player targets
+  const confirmedTargets = allPlayerChosenNumbers;
 
   // Count active player hits in drawn balls
-  const activeHitsCount = playerTargets.filter((num) => drawnBalls.includes(num)).length;
+  const activeHitsCount = confirmedTargets.filter((num) => drawnBalls.includes(num)).length;
 
   const handleBetClick = () => {
     if (selectedNumbers.length === 0 || isMaxTicketsReached || isDrawingOrReset) return;
@@ -155,7 +155,7 @@ export const FastKenoBoardStage: React.FC<FastKenoBoardStageProps> = ({
 
             {/* Active Hits & Live Ball Counter Badge ("BALL XX / 20" in bright green) */}
             <div className="flex items-center gap-2">
-              {playerTargets.length > 0 && activeHitsCount > 0 && (
+              {confirmedTargets.length > 0 && activeHitsCount > 0 && (
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#112017] border border-[#1e3828] text-[#facc15] text-[10px] font-bold font-mono-num">
                   <Sparkles className="w-2.5 h-2.5 text-[#facc15]" />
                   <span>{activeHitsCount} Hits</span>
@@ -178,7 +178,7 @@ export const FastKenoBoardStage: React.FC<FastKenoBoardStageProps> = ({
               {Array.from({ length: 10 }, (_, i) => {
                 const ball = chuteRow1[i];
                 const isSlotted = ball !== undefined;
-                const isHit = isSlotted && playerTargets.includes(ball);
+                const isHit = isSlotted && confirmedTargets.includes(ball);
                 const isLatest = isSlotted && ball === lastDrawnBall;
 
                 return (
@@ -203,7 +203,7 @@ export const FastKenoBoardStage: React.FC<FastKenoBoardStageProps> = ({
               {Array.from({ length: 10 }, (_, i) => {
                 const ball = chuteRow2[i];
                 const isSlotted = ball !== undefined;
-                const isHit = isSlotted && playerTargets.includes(ball);
+                const isHit = isSlotted && confirmedTargets.includes(ball);
                 const isLatest = isSlotted && ball === lastDrawnBall;
 
                 return (
@@ -237,7 +237,7 @@ export const FastKenoBoardStage: React.FC<FastKenoBoardStageProps> = ({
         <div className="grid grid-cols-10 gap-[2px] sm:gap-1">
           {Array.from({ length: 80 }, (_, i) => i + 1).map((num) => {
             const isSelected = selectedNumbers.includes(num);
-            const isTicketTarget = playerTargets.includes(num);
+            const isTicketTarget = confirmedTargets.includes(num);
             const isDrawn = drawnBalls.includes(num);
             const isHit = isDrawn && isTicketTarget;
             const isMiss = isDrawn && !isTicketTarget;
