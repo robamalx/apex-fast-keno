@@ -94,7 +94,7 @@ export default async function handler(req, res) {
     recentDraws,
     hotNumbers: [7, 12, 23, 38, 45, 56, 64, 78],
     coldNumbers: [3, 19, 28, 31, 49, 52, 60, 73],
-    receiverName: 'Robinson Solomon',
+    receiverName: 'Mikiyas Reta',
     phoneNumber: '0963068117',
   });
 }

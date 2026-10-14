@@ -28,7 +28,7 @@ export const CashierModal: React.FC<CashierModalProps> = ({
   isOpen,
   onClose,
   balance,
-  receiverName,
+  receiverName = 'Mikiyas Reta',
   phoneNumber = '',
   depositNumber = phoneNumber || 'Loading...',
   userId = 'real_user',
@@ -201,11 +201,9 @@ export const CashierModal: React.FC<CashierModalProps> = ({
                     <ShieldCheck className="w-4 h-4 text-[#00e699]" />
                     Manual Telebirr Deposit
                   </span>
-                  {receiverName && (
-                    <span className="text-[11px] text-slate-400 font-medium">
-                      {receiverName}
-                    </span>
-                  )}
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    {receiverName || 'Mikiyas Reta'}
+                  </span>
                 </div>
 
                 {/* Exact Instruction Message */}

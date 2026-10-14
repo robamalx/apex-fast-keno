@@ -68,7 +68,7 @@ export default function App({
   const [isRegistered, setIsRegistered] = useState<boolean>(isB2BState);
 
   // Telebirr Configuration State
-  const [receiverName, setReceiverName] = useState<string>('Robinson Solomon');
+  const [receiverName, setReceiverName] = useState<string>('Mikiyas Reta');
   const [depositNumber, setDepositNumber] = useState<string>('Loading...');
   const [phoneNumber, setPhoneNumber] = useState<string>('Loading...');
 

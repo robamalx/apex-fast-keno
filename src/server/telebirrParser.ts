@@ -112,7 +112,7 @@ export function parseTelebirrText(text: string): ParsedTelebirrReceipt {
  */
 export async function autoVerifyEthioTelecomReceipt(
   receiptNo: string,
-  expectedReceiverName: string = 'Robinson Solomon',
+  expectedReceiverName: string = 'Mikiyas Reta',
   rawSubmittedText: string = ''
 ): Promise<{
   verified: boolean;

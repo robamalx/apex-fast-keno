@@ -676,7 +676,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onBackToApp, showToast
                 </span>
               </div>
               <p className="text-[10px] text-slate-400 font-mono-num">
-                Agent: <span className="text-white font-bold">{receiverName || 'Robinson Solomon'}</span> ({agentPhone || '0963068117'})
+                Agent: <span className="text-white font-bold">{receiverName || 'Mikiyas Reta'}</span> ({agentPhone || '0963068117'})
               </p>
             </div>
           </div>
