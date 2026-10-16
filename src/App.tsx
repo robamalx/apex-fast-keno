@@ -125,6 +125,8 @@ export default function App({
   const drawnBallsRef = useRef(drawnBalls);
   drawnBallsRef.current = drawnBalls;
   const drawnRoundIdRef = useRef<string>('');
+  const isDrawingActiveRef = useRef<boolean>(false);
+  const drawIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Real persistent Telegram/Browser User ID
   const getRealUserId = useCallback((): string => {
@@ -419,9 +421,18 @@ export default function App({
     setBalance((prev) => prev + winAmount);
   }, []);
 
-  // Sequential 20-Ball Reveal (Step-by-Step, 20 Balls across ~10s in the 15s DRAWING window)
+  // Suspense-building draw delay (650ms between each ball, within the 400ms - 800ms target)
+  const BALL_DRAW_DELAY_MS = 650;
+
+  // Sequential 20-Ball Reveal (Step-by-Step with deliberate 650ms suspense delay)
   const triggerDrawSequence = useCallback(async (targetDrawId: string) => {
-    // 1. Lock game in DRAWING state, clear un-submitted temporary selections, and clear previous draw balls
+    // 1. Mark drawing animation as active and lock board & bets
+    isDrawingActiveRef.current = true;
+    if (drawIntervalRef.current) {
+      clearInterval(drawIntervalRef.current);
+      drawIntervalRef.current = null;
+    }
+
     setPhase('drawing');
     phaseRef.current = 'drawing';
     setSelectedNumbers([]);
@@ -472,8 +483,8 @@ export default function App({
       myTicketsRef.current.flatMap((t) => t.chosenNumbers)
     );
 
-    // 3. Visually reveal each ball step-by-step (500ms each = 10s for 20 balls)
-    const drawInterval = setInterval(() => {
+    // 3. Visually reveal each ball one by one with a deliberate 650ms suspense delay
+    drawIntervalRef.current = setInterval(() => {
       if (currentIndex < fullDrawList.length) {
         const ball = fullDrawList[currentIndex];
         setDrawnBalls((prev) => [...prev, ball]);
@@ -488,10 +499,14 @@ export default function App({
 
         currentIndex++;
       } else {
-        clearInterval(drawInterval);
+        if (drawIntervalRef.current) {
+          clearInterval(drawIntervalRef.current);
+          drawIntervalRef.current = null;
+        }
 
         // 4. All 20 balls revealed: check player's tickets against drawn numbers
         setIsDrawFinished(true);
+        isDrawingActiveRef.current = false;
 
         const currentActiveTickets = myTicketsRef.current;
         let totalWinnings = 0;
@@ -569,13 +584,13 @@ export default function App({
           haptic.notification('error');
         }
       }
-    }, 500);
-  }, [getRealUserId, handleWin]);
+    }, BALL_DRAW_DELAY_MS);
+  }, [getRealUserId, handleWin, isB2BState, b2bPlayerId, b2bSessionToken]);
 
   // Master UTC absolute synchronized game loop:
   // TOTAL_CYCLE = 60s
-  // BETTING_DURATION = 45s (counts down 45 -> 0)
-  // DRAWING_DURATION = 15s (counts down 15 -> 0)
+  // BETTING_DURATION = 40s (counts down 40 -> 0)
+  // DRAWING_DURATION = 20s (counts down 20 -> 0; 20 balls * 650ms = 13s draw + 7s result celebration)
   useEffect(() => {
     const updateTimer = () => {
       const nowSec = Math.floor(Date.now() / 1000);
@@ -585,9 +600,9 @@ export default function App({
       let currentPhase: 'betting' | 'drawing' = 'betting';
       let timeLeft = 0;
 
-      if (elapsedInCycle < 45) {
+      if (elapsedInCycle < 40) {
         currentPhase = 'betting';
-        timeLeft = 45 - elapsedInCycle;
+        timeLeft = 40 - elapsedInCycle;
       } else {
         currentPhase = 'drawing';
         timeLeft = 60 - elapsedInCycle;
@@ -614,6 +629,11 @@ export default function App({
       }
       // Transition / Rollover to new roundId in BETTING: clear drawn balls and reset ticket
       else if (currentPhase === 'betting') {
+        // Guard: Do not re-open betting or wipe board if drawing animation is actively running
+        if (isDrawingActiveRef.current) {
+          return;
+        }
+
         if (phaseRef.current !== 'betting') {
           setPhase('betting');
           phaseRef.current = 'betting';
@@ -630,12 +650,17 @@ export default function App({
     updateTimer();
     const timer = setInterval(updateTimer, 250);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (drawIntervalRef.current) {
+        clearInterval(drawIntervalRef.current);
+      }
+    };
   }, [triggerDrawSequence]);
 
   // Toggle Number Selection on Keno Board
   const handleToggleNumber = (num: number) => {
-    if (phase !== 'betting') return;
+    if (phase !== 'betting' || isDrawingActiveRef.current) return;
     haptic.selection();
 
     setSelectedNumbers((prev) => {
@@ -653,12 +678,14 @@ export default function App({
 
   // Clear Selection
   const handleClearSelection = () => {
+    if (phase !== 'betting' || isDrawingActiveRef.current) return;
     haptic.selection();
     setSelectedNumbers([]);
   };
 
   // Quick Pick
   const handleQuickPick = (count: number) => {
+    if (phase !== 'betting' || isDrawingActiveRef.current) return;
     haptic.selection();
     const picked: number[] = [];
     while (picked.length < count) {
@@ -671,7 +698,7 @@ export default function App({
 
   // Multi-Ticket Placement with Selection Auto-Clear
   const handlePlaceBet = async () => {
-    if (phase !== 'betting') return;
+    if (phase !== 'betting' || isDrawingActiveRef.current) return;
 
     if (selectedNumbers.length === 0) {
       haptic.notification('warning');
