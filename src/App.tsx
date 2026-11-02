@@ -16,6 +16,31 @@ import { Ticket, DrawResult, CommunityBet, TelegramUser } from './types/keno';
 import { checkIsAuthorizedAdmin } from './config/adminConfig';
 import { calculateMultiplier } from './utils/paytable';
 
+// Helper to seed 20 initial historical draws so Results tab is never empty when player first opens game
+function generateInitialDraws(count: number = 20): DrawResult[] {
+  const currentTimestampSec = Math.floor(Date.now() / 1000);
+  const currentRoundNum = Math.floor(currentTimestampSec / 60);
+  const initialDraws: DrawResult[] = [];
+
+  for (let i = 1; i <= count; i++) {
+    const roundId = String(currentRoundNum - i);
+    const d = new Date(Date.now() - i * 60 * 1000);
+    const time = d.toTimeString().split(' ')[0];
+    const nums = new Set<number>();
+    while (nums.size < 20) {
+      nums.add(Math.floor(Math.random() * 80) + 1);
+    }
+    initialDraws.push({
+      drawId: roundId,
+      timestamp: time,
+      drawnNumbers: Array.from(nums).sort((a, b) => a - b),
+      totalBets: Math.floor(650 + Math.random() * 250),
+      winnersCount: Math.floor(80 + Math.random() * 60),
+    });
+  }
+  return initialDraws;
+}
+
 export interface AppProps {
   isB2B?: boolean;
   playerId?: string;
@@ -91,7 +116,19 @@ export default function App({
   // Active & Historical Tickets & Draws
   const [myTickets, setMyTickets] = useState<Ticket[]>([]); // Current round active tickets (pinned on top)
   const [myBetsHistory, setMyBetsHistory] = useState<Ticket[]>([]);
-  const [recentDraws, setRecentDraws] = useState<DrawResult[]>([]);
+  // Player's past resolved tickets: rolling 20 items (latest to oldest)
+  const [ticketHistory, setTicketHistory] = useState<Ticket[]>(() => {
+    try {
+      const saved = localStorage.getItem('fastkeno_ticket_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed.slice(0, 20);
+      }
+    } catch {}
+    return [];
+  });
+  // Global draws: rolling 20 items (latest to oldest, initialized with 20 historical draws)
+  const [recentDraws, setRecentDraws] = useState<DrawResult[]>(() => generateInitialDraws(20));
   const [communityBets, setCommunityBets] = useState<CommunityBet[]>([]);
   const [totalCommunityCount, setTotalCommunityCount] = useState<number>(748);
   const [hotNumbers, setHotNumbers] = useState<number[]>([7, 12, 23, 38, 45, 56, 64, 78]);
@@ -204,9 +241,24 @@ export default function App({
         }
         if (Array.isArray(data.myBetsHistory)) {
           setMyBetsHistory(data.myBetsHistory);
+          if (data.myBetsHistory.length > 0) {
+            setTicketHistory((prev) => {
+              const existingIds = new Set(prev.map((t) => t.id));
+              const newItems = data.myBetsHistory.filter((t: Ticket) => !existingIds.has(t.id));
+              const merged = [...prev, ...newItems].slice(0, 20);
+              try {
+                localStorage.setItem('fastkeno_ticket_history', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
         }
         if (Array.isArray(data.recentDraws) && data.recentDraws.length > 0) {
-          setRecentDraws(data.recentDraws);
+          setRecentDraws((prev) => {
+            const existingIds = new Set(data.recentDraws.map((d: DrawResult) => d.drawId));
+            const combined = [...data.recentDraws, ...prev.filter((d) => !existingIds.has(d.drawId))];
+            return combined.slice(0, 20);
+          });
         }
         if (data.hotNumbers) setHotNumbers(data.hotNumbers);
         if (data.coldNumbers) setColdNumbers(data.coldNumbers);
@@ -460,9 +512,6 @@ export default function App({
         const data = await res.json();
         if (Array.isArray(data.drawnNumbers) && data.drawnNumbers.length === 20) {
           fullDrawList = data.drawnNumbers;
-          if (data.recentDraws && Array.isArray(data.recentDraws)) {
-            setRecentDraws(data.recentDraws);
-          }
         }
       }
     } catch {
@@ -531,11 +580,19 @@ export default function App({
 
         if (resolvedTickets.length > 0) {
           setMyTickets(resolvedTickets);
+          // Push newly resolved tickets into ticketHistory array (rolling 20 items, newest to oldest)
+          setTicketHistory((prev) => {
+            const updated = [...resolvedTickets, ...prev].slice(0, 20);
+            try {
+              localStorage.setItem('fastkeno_ticket_history', JSON.stringify(updated));
+            } catch {}
+            return updated;
+          });
         }
 
         setLastRoundWinnings(totalWinnings);
 
-        // Update recent draws list
+        // Update recent draws list: strictly maintain rolling window of 20 items (newest at top, 21st dropped)
         const newDrawEntry: DrawResult = {
           drawId: targetDrawId,
           timestamp: new Date().toTimeString().split(' ')[0],
@@ -543,7 +600,7 @@ export default function App({
           totalBets: Math.floor(650 + Math.random() * 250),
           winnersCount: Math.floor(80 + Math.random() * 60),
         };
-        setRecentDraws((prev) => [newDrawEntry, ...prev.slice(0, 19)]);
+        setRecentDraws((prev) => [newDrawEntry, ...prev.filter((d) => d.drawId !== targetDrawId)].slice(0, 20));
 
         // 5. Update player's balance if they won
         if (totalWinnings > 0) {
@@ -1010,6 +1067,7 @@ export default function App({
             <div className="w-full">
               <LiveTicketFeed
                 myTickets={myTickets}
+                ticketHistory={ticketHistory}
                 communityBets={communityBets}
                 recentDraws={recentDraws}
                 drawnBalls={drawnBalls}

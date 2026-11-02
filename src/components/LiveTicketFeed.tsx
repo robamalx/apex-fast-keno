@@ -5,6 +5,7 @@ import { haptic } from '../utils/telegram';
 
 interface LiveTicketFeedProps {
   myTickets: Ticket[];
+  ticketHistory?: Ticket[];
   communityBets: CommunityBet[];
   recentDraws: DrawResult[];
   drawnBalls: number[];
@@ -20,6 +21,7 @@ interface LiveTicketFeedProps {
 
 export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
   myTickets,
+  ticketHistory = [],
   communityBets = [],
   recentDraws,
   drawnBalls,
@@ -332,37 +334,99 @@ export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
         </div>
       )}
 
-      {/* Tab View: HISTORY */}
+      {/* Tab View: HISTORY (Player's Personal Past Tickets) */}
       {activeTab === 'history' && (
         <div className="space-y-2.5">
-          {recentDraws.length === 0 ? (
-            <div className="text-center py-8 text-slate-500 text-xs">
-              No previous round history recorded yet.
+          {ticketHistory.length === 0 ? (
+            <div className="text-center py-8 text-slate-400 text-xs flex flex-col items-center justify-center space-y-1">
+              <span className="text-slate-400 font-semibold text-xs">No ticket history recorded yet.</span>
+              <span className="text-slate-500 text-[11px]">Place your bets and complete a round to see your tickets here!</span>
             </div>
           ) : (
-            recentDraws.map((draw) => (
-              <div
-                key={draw.drawId}
-                className="bg-[#040705] border border-[#1e3325] rounded-xl p-2.5 flex flex-col space-y-2"
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-white font-mono-num tabular-nums">
-                    Draw #{draw.drawId}
-                  </span>
-                  <span className="text-slate-400 text-[11px] font-mono-num tabular-nums">{draw.timestamp}</span>
+            ticketHistory.slice(0, 20).map((ticket) => {
+              const isWin = ticket.status === 'win' || (ticket.payout !== undefined && ticket.payout > 0);
+              const drawnSet = new Set(ticket.drawnNumbers || []);
+
+              return (
+                <div
+                  key={ticket.id}
+                  className={`bg-[#040705] border rounded-xl p-2.5 sm:p-3 flex flex-col space-y-2.5 shadow-md transition-all ${
+                    isWin ? 'border-[#00e699]/40 bg-[#00e699]/[0.03]' : 'border-[#1e3325]'
+                  }`}
+                >
+                  {/* Top Bar: Draw ID / Ticket ID & Win/Loss Badge */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-xs text-white font-mono-num tabular-nums">
+                        Draw #{ticket.drawId}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono-num tabular-nums">
+                        #{ticket.id.slice(-6)}
+                      </span>
+                    </div>
+
+                    {/* Win / Loss Visual Indicator with Payout Amount */}
+                    {isWin ? (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono-num tabular-nums bg-[#00e699]/20 text-[#00e699] border border-[#00e699]/40 flex items-center gap-1 shadow-sm">
+                        WIN +{(ticket.payout ?? 0).toFixed(2)} ETB
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold font-mono-num tabular-nums bg-[#141f18] text-slate-400 border border-[#1e3325]">
+                        LOSS (0.00 ETB)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Player's Chosen Numbers with Hit Highlighting */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {ticket.chosenNumbers.map((num) => {
+                      const isHit = drawnSet.size > 0 && drawnSet.has(num);
+                      return (
+                        <span
+                          key={num}
+                          className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center font-mono-num font-bold text-xs tabular-nums transition-all ${
+                            isHit
+                              ? 'bg-[#00e699] text-black font-extrabold shadow-[0_0_8px_rgba(0,230,153,0.6)] ring-1 ring-white/50'
+                              : 'bg-[#141f18] text-slate-300 border border-[#1e3325]'
+                          }`}
+                        >
+                          {num}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  {/* Bottom Stats: Stake, Hits/Spots, Multiplier, Timestamp */}
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 border-t border-[#1e3325]/60 pt-2 font-mono-num tabular-nums">
+                    <div className="flex items-center gap-3">
+                      <span>
+                        Stake: <strong className="text-white font-bold">{ticket.stake.toFixed(2)} ETB</strong>
+                      </span>
+                      {ticket.matchedCount !== undefined && (
+                        <span>
+                          Hits: <strong className={ticket.matchedCount > 0 ? 'text-[#00e699] font-bold' : 'text-slate-400'}>
+                            {ticket.matchedCount}/{ticket.chosenNumbers.length}
+                          </strong>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {ticket.multiplier !== undefined && ticket.multiplier > 0 && (
+                        <span className="text-[#facc15] font-bold">
+                          {ticket.multiplier}×
+                        </span>
+                      )}
+                      {ticket.timestamp && (
+                        <span className="text-slate-500 text-[10px]">
+                          {ticket.timestamp}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  {draw.drawnNumbers.map((num) => (
-                    <span
-                      key={num}
-                      className="w-6 h-6 rounded bg-[#141f18] border border-[#1e3325] text-slate-200 flex items-center justify-center font-mono-num font-bold text-xs tabular-nums"
-                    >
-                      {num}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
@@ -370,53 +434,59 @@ export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
       {/* Tab View: RESULTS (Past rounds with Draw IDs, timestamps, and 2x10 ball combinations) */}
       {activeTab === 'results' && (
         <div className="space-y-2.5">
-          {recentDraws.map((draw) => {
-            const row1 = draw.drawnNumbers.slice(0, 10);
-            const row2 = draw.drawnNumbers.slice(10, 20);
+          {recentDraws.length === 0 ? (
+            <div className="text-center py-8 text-slate-400 text-xs">
+              No recent draws available.
+            </div>
+          ) : (
+            recentDraws.slice(0, 20).map((draw) => {
+              const row1 = draw.drawnNumbers.slice(0, 10);
+              const row2 = draw.drawnNumbers.slice(10, 20);
 
-            return (
-              <div
-                key={draw.drawId}
-                className="bg-[#040705] border border-[#1e3325] rounded-xl p-2.5 shadow-md flex flex-col space-y-2"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-[#00e699]" />
-                    <span className="font-bold text-sm text-white font-mono-num tabular-nums">
-                      Round #{draw.drawId}
-                    </span>
+              return (
+                <div
+                  key={draw.drawId}
+                  className="bg-[#040705] border border-[#1e3325] rounded-xl p-2.5 shadow-md flex flex-col space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#00e699]" />
+                      <span className="font-bold text-sm text-white font-mono-num tabular-nums">
+                        Round #{draw.drawId}
+                      </span>
+                    </div>
+                    <span className="text-xs text-slate-400 font-mono-num tabular-nums">{draw.timestamp}</span>
                   </div>
-                  <span className="text-xs text-slate-400 font-mono-num tabular-nums">{draw.timestamp}</span>
-                </div>
 
-                {/* 2x10 Ball Combinations */}
-                <div className="space-y-1">
-                  {/* Row 1: First 10 balls */}
-                  <div className="grid grid-cols-10 gap-1">
-                    {row1.map((num) => (
-                      <div
-                        key={`r1_${num}`}
-                        className="h-6 sm:h-7 rounded-md bg-[#141f18] text-[#00e699] border border-[#1e3325] flex items-center justify-center font-mono-num font-bold text-xs tabular-nums shadow-sm"
-                      >
-                        {num}
-                      </div>
-                    ))}
-                  </div>
-                  {/* Row 2: Next 10 balls */}
-                  <div className="grid grid-cols-10 gap-1">
-                    {row2.map((num) => (
-                      <div
-                        key={`r2_${num}`}
-                        className="h-6 sm:h-7 rounded-md bg-[#141f18] text-[#00e699] border border-[#1e3325] flex items-center justify-center font-mono-num font-bold text-xs tabular-nums shadow-sm"
-                      >
-                        {num}
-                      </div>
-                    ))}
+                  {/* 2x10 Ball Combinations */}
+                  <div className="space-y-1">
+                    {/* Row 1: First 10 balls */}
+                    <div className="grid grid-cols-10 gap-1">
+                      {row1.map((num) => (
+                        <div
+                          key={`r1_${num}`}
+                          className="h-6 sm:h-7 rounded-md bg-[#141f18] text-[#00e699] border border-[#1e3325] flex items-center justify-center font-mono-num font-bold text-xs tabular-nums shadow-sm"
+                        >
+                          {num}
+                        </div>
+                      ))}
+                    </div>
+                    {/* Row 2: Next 10 balls */}
+                    <div className="grid grid-cols-10 gap-1">
+                      {row2.map((num) => (
+                        <div
+                          key={`r2_${num}`}
+                          className="h-6 sm:h-7 rounded-md bg-[#141f18] text-[#00e699] border border-[#1e3325] flex items-center justify-center font-mono-num font-bold text-xs tabular-nums shadow-sm"
+                        >
+                          {num}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       )}
 
