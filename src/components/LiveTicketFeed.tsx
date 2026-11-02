@@ -346,16 +346,34 @@ export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
             ticketHistory.slice(0, 20).map((ticket) => {
               const isWin = ticket.status === 'win' || (ticket.payout !== undefined && ticket.payout > 0);
               const drawnSet = new Set(ticket.drawnNumbers || []);
+              const spotsCount = ticket.chosenNumbers.length;
+              const hitsCount =
+                ticket.matchedCount !== undefined
+                  ? ticket.matchedCount
+                  : ticket.chosenNumbers.filter((num) => drawnSet.has(num)).length;
+              const mult =
+                ticket.multiplier !== undefined && ticket.multiplier > 0
+                  ? ticket.multiplier
+                  : ticket.stake > 0 && (ticket.payout ?? 0) > 0
+                  ? Math.round(((ticket.payout ?? 0) / ticket.stake) * 10) / 10
+                  : 0;
 
               return (
                 <div
                   key={ticket.id}
-                  className={`bg-[#040705] border rounded-xl p-2.5 sm:p-3 flex flex-col space-y-2.5 shadow-md transition-all ${
-                    isWin ? 'border-[#00e699]/40 bg-[#00e699]/[0.03]' : 'border-[#1e3325]'
+                  className={`relative overflow-hidden rounded-xl p-3 sm:p-3.5 flex flex-col space-y-2.5 shadow-md transition-all ${
+                    isWin
+                      ? 'bg-gradient-to-br from-amber-500/[0.08] via-[#050a06] to-[#040705] border-2 border-amber-400/80 shadow-[0_0_22px_rgba(251,191,36,0.22)] ring-1 ring-amber-400/30'
+                      : 'bg-[#040705] border border-[#1e3325]'
                   }`}
                 >
-                  {/* Top Bar: Draw ID / Ticket ID & Win/Loss Badge */}
-                  <div className="flex items-center justify-between">
+                  {/* Subtle golden animated pulse glow on card border for winning tickets */}
+                  {isWin && (
+                    <div className="absolute inset-0 pointer-events-none rounded-xl border border-amber-400/50 animate-pulse shadow-[inset_0_0_14px_rgba(251,191,36,0.15)]" />
+                  )}
+
+                  {/* Top Bar: Draw ID / Ticket ID & Winner Badge / Loss Indicator */}
+                  <div className="relative z-10 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-xs text-white font-mono-num tabular-nums">
                         Draw #{ticket.drawId}
@@ -365,11 +383,13 @@ export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
                       </span>
                     </div>
 
-                    {/* Win / Loss Visual Indicator with Payout Amount */}
+                    {/* Winner Badge: Dynamic angled stamp with glow for winning tickets */}
                     {isWin ? (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono-num tabular-nums bg-[#00e699]/20 text-[#00e699] border border-[#00e699]/40 flex items-center gap-1 shadow-sm">
-                        WIN +{(ticket.payout ?? 0).toFixed(2)} ETB
-                      </span>
+                      <div className="flex items-center">
+                        <span className="inline-flex items-center gap-1 -rotate-6 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black uppercase text-[10px] sm:text-xs tracking-wider px-2.5 py-0.5 rounded shadow-[0_0_14px_rgba(251,191,36,0.7)] border border-yellow-200/90 font-mono-num">
+                          ★ WINNER
+                        </span>
+                      </div>
                     ) : (
                       <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold font-mono-num tabular-nums bg-[#141f18] text-slate-400 border border-[#1e3325]">
                         LOSS (0.00 ETB)
@@ -378,7 +398,7 @@ export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
                   </div>
 
                   {/* Player's Chosen Numbers with Hit Highlighting */}
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="relative z-10 flex flex-wrap items-center gap-1.5">
                     {ticket.chosenNumbers.map((num) => {
                       const isHit = drawnSet.size > 0 && drawnSet.has(num);
                       return (
@@ -396,34 +416,64 @@ export const LiveTicketFeed: React.FC<LiveTicketFeedProps> = ({
                     })}
                   </div>
 
-                  {/* Bottom Stats: Stake, Hits/Spots, Multiplier, Timestamp */}
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 border-t border-[#1e3325]/60 pt-2 font-mono-num tabular-nums">
-                    <div className="flex items-center gap-3">
-                      <span>
-                        Stake: <strong className="text-white font-bold">{ticket.stake.toFixed(2)} ETB</strong>
-                      </span>
-                      {ticket.matchedCount !== undefined && (
+                  {/* Winning Ticket Details: Hit Ratio & Multiplier Row + Enhanced Payout */}
+                  {isWin ? (
+                    <div className="relative z-10 flex flex-col space-y-2 pt-1 border-t border-amber-400/25">
+                      {/* Hit Ratio & Multiplier: Row explicitly stating results (e.g. "2/3 Hits • 2x Multiplier") */}
+                      <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-amber-400/[0.08] border border-amber-400/30 text-xs text-amber-200 font-mono-num tabular-nums">
+                        <span className="flex items-center gap-1.5 font-bold text-amber-300">
+                          <span className="text-amber-400 text-xs">🎯</span>
+                          <span>{hitsCount}/{spotsCount} Hits</span>
+                        </span>
+                        <span className="text-amber-500/60 font-bold">•</span>
+                        <span className="font-extrabold text-amber-300">
+                          {mult}x Multiplier
+                        </span>
+                      </div>
+
+                      {/* Enhanced Payout Text: Bold glowing Gold/Yellow color with larger font size */}
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                          Payout
+                        </span>
+                        <span className="text-amber-400 font-black text-base sm:text-lg font-mono-num tabular-nums tracking-wide drop-shadow-[0_0_12px_rgba(251,191,36,0.65)]">
+                          +{(ticket.payout ?? 0).toFixed(2)} ETB
+                        </span>
+                      </div>
+
+                      {/* Bottom Stats: Stake and Timestamp */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 font-mono-num tabular-nums">
                         <span>
-                          Hits: <strong className={ticket.matchedCount > 0 ? 'text-[#00e699] font-bold' : 'text-slate-400'}>
-                            {ticket.matchedCount}/{ticket.chosenNumbers.length}
+                          Stake: <strong className="text-white font-bold">{ticket.stake.toFixed(2)} ETB</strong>
+                        </span>
+                        {ticket.timestamp && (
+                          <span className="text-slate-500 text-[10px]">
+                            {ticket.timestamp}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Losing Ticket Footer */
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 border-t border-[#1e3325]/60 pt-2 font-mono-num tabular-nums">
+                      <div className="flex items-center gap-3">
+                        <span>
+                          Stake: <strong className="text-white font-bold">{ticket.stake.toFixed(2)} ETB</strong>
+                        </span>
+                        <span>
+                          Hits:{' '}
+                          <strong className="text-slate-400 font-bold">
+                            {hitsCount}/{spotsCount}
                           </strong>
                         </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {ticket.multiplier !== undefined && ticket.multiplier > 0 && (
-                        <span className="text-[#facc15] font-bold">
-                          {ticket.multiplier}×
-                        </span>
-                      )}
+                      </div>
                       {ticket.timestamp && (
                         <span className="text-slate-500 text-[10px]">
                           {ticket.timestamp}
                         </span>
                       )}
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })
